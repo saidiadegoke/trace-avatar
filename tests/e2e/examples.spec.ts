@@ -41,3 +41,13 @@ test('the README quick start works as written', async ({ page }) => {
   await expect(host.locator('.chip')).toHaveText('Ada Stores', { timeout: 8000 });
   await expect(host.locator('.bubble')).toHaveText('Send it — done.', { timeout: 8000 });
 });
+
+for (const path of ['/playground/', '/examples/vanilla-html/']) {
+  test(`${path} totals an amount typed with separators`, async ({ page }) => {
+    await page.goto(path);
+    for (const [typed, shown] of [['46,000', '₦46,000'], ['1,250.5', '₦1,250.5'], ['abc', '₦0'], ['', '₦0']]) {
+      await page.fill('#amount', typed);
+      await expect(page.locator('#total')).toHaveText(shown);
+    }
+  });
+}

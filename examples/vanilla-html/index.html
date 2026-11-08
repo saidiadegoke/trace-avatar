@@ -28,7 +28,7 @@
   </main>
   <script>
     const amount = document.getElementById('amount');
-    amount.addEventListener('input', () => { document.getElementById('total').textContent = '₦' + Number(amount.value || 0).toLocaleString(); });
+    amount.addEventListener('input', () => { document.getElementById('total').textContent = '₦' + (Number(amount.value.replace(/[^\d.]/g, '')) || 0).toLocaleString(); });
   </script>
   <!-- From a CDN: https://cdn.jsdelivr.net/npm/trace-avatar/dist/trace.min.js -->
   <script src="../../dist/trace.min.js"></script>
