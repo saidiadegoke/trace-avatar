@@ -235,10 +235,42 @@ describe('finding elements', () => {
     expect(sim.fx.filter((f) => f.fx === 'reveal')).toEqual([{ fx: 'reveal', i: 1 }]);
   });
 
-  it('reports which locator found the element', () => {
-    const sim = new Sim(twoClicks(), { 0: box(1, 1, 1, 1, { by: 'role' }), 1: box(1, 1, 0, 0, { by: 'xy' }) }).play();
+  it('reports which locator found the element; a target with only xy uses it at once', () => {
+    const tr = trace({ steps: [
+      { type: 'click', target: { sel: '#a' }, t: 1000 },
+      { type: 'click', target: { xy: { x: 5, y: 5 } }, t: 2000 },
+    ] });
+    const sim = new Sim(tr, { 0: box(1, 1, 1, 1, { by: 'role' }), 1: box(5, 5, 0, 0, { by: 'xy' }) }).play();
     sim.until(99_999);
     expect(sim.fx.filter((f) => f.fx === 'step')).toEqual([{ fx: 'step', i: 0, by: 'role' }, { fx: 'step', i: 1, by: 'xy' }]);
+    expect(sim.kinds()).not.toContain('stalled');
+  });
+
+  it('a recorded pixel point does not stand in for a selector until looking gives up (the page may not be there yet)', () => {
+    const sim = new Sim(twoClicks(), { 0: A, 1: box(400, 300, 0, 0, { by: 'xy' }) }).play();
+    sim.until(1300);
+    expect(sim.s.phase).toBe('waiting');
+    sim.run(2000);
+    expect(sim.s.phase).toBe('waiting');
+    expect(sim.view.cursor).toMatchObject({ x: 150, y: 120 }); // still on the last real element
+    sim.run(2200);
+    expect(sim.fx).toContainEqual({ fx: 'stalled', i: 1, reason: 'not-found' });
+    sim.until(99_999);
+    expect(sim.fx).toContainEqual({ fx: 'step', i: 1, by: 'xy' });
+    expect(sim.fx.filter((f) => f.fx === 'ripple')).toHaveLength(2);
+    expect(sim.view.cursor).toMatchObject({ x: 400, y: 300 }); // then goes to the recorded point
+  });
+
+  it('if the element turns up while waiting, it is used, not the pixel point', () => {
+    const sim = new Sim(twoClicks(), { 0: A, 1: box(400, 300, 0, 0, { by: 'xy' }) }).play();
+    sim.until(1300);
+    expect(sim.s.phase).toBe('waiting');
+    sim.looks[1] = B;
+    sim.run(100);
+    expect(sim.s.phase).toBe('playing');
+    sim.until(99_999);
+    expect(sim.fx).toContainEqual({ fx: 'step', i: 1, by: 'sel' });
+    expect(sim.kinds()).not.toContain('stalled');
   });
 
   it('emits scroll for scroll steps', () => {
@@ -567,5 +599,116 @@ describe('properties', () => {
       const fired = sim.fx.filter((f) => f.fx === 'step').map((f) => (f as { i: number }).i);
       return sim.s.phase === 'ended' && JSON.stringify(fired) === JSON.stringify(tr.steps.map((_, i) => i));
     }), { numRuns: 150 });
+  });
+});
+
+describe('pages', () => {
+  const paged = () => trace({ steps: [
+    { type: 'click', target: { sel: '#a' }, t: 1000, page: '/app' },
+    { type: 'click', target: { sel: '#b' }, t: 2000, page: '/app/tasks/*' },
+  ] });
+
+  it('on the wrong page it waits without searching, says where to go, and never gives up', () => {
+    const sim = new Sim(paged(), { 0: A, 1: B });
+    sim.at = '/app/tasks/new';
+    sim.play();
+    expect(sim.s.phase).toBe('waiting');
+    expect(sim.fx).toContainEqual({ fx: 'page', i: 0, want: '/app' });
+    expect(sim.view.caption).toEqual({ text: 'Open /app to continue', key: -1000 });
+    const calls = sim.lookCalls;
+    sim.run(60_000);
+    expect(sim.s.phase).toBe('waiting');
+    expect(sim.kinds()).not.toContain('stalled');
+    expect(sim.fx.filter((f) => f.fx === 'page')).toHaveLength(1);
+    expect(sim.lookCalls).toBe(calls); // the wrong page is never searched
+    sim.at = '/app';
+    sim.run(100);
+    expect(sim.s.phase).toBe('playing');
+  });
+
+  it('waits again mid-trace when the next step is on another page, then carries on when the viewer gets there', () => {
+    const sim = new Sim(paged(), { 0: A, 1: B });
+    sim.at = '/app';
+    sim.play();
+    sim.until(1300);
+    expect(sim.fx).toContainEqual({ fx: 'step', i: 0, by: 'sel' });
+    expect(sim.s.phase).toBe('waiting');
+    expect(sim.fx).toContainEqual({ fx: 'page', i: 1, want: '/app/tasks/*' });
+    expect(sim.view.caption?.text).toBe('Open /app/tasks/… to continue');
+    expect(sim.view.cursor).toMatchObject({ visible: true, x: 150, y: 120 }); // stays on the last element
+    sim.at = '/app/tasks/bfd02a18';
+    sim.run(50);
+    sim.until(99_999);
+    expect(sim.fx).toContainEqual({ fx: 'step', i: 1, by: 'sel' });
+    expect(sim.s.phase).toBe('ended');
+  });
+
+  it('an element that looks right on the wrong page is not used', () => {
+    const sim = new Sim(paged(), { 0: A, 1: B });
+    sim.at = '/app';
+    sim.play();
+    sim.until(1300);
+    // B "exists" here too (same selector on the overview), but step 1 belongs to a task page.
+    expect(sim.s.phase).toBe('waiting');
+    expect(sim.fx.filter((f) => f.fx === 'step').map((f) => (f as { i: number }).i)).toEqual([0]);
+  });
+
+  it('without a known page, or for steps without one, nothing changes', () => {
+    const a = new Sim(paged(), { 0: A, 1: B }).play();
+    a.until(99_999);
+    expect(a.kinds()).not.toContain('page');
+    expect(a.s.phase).toBe('ended');
+    const b = new Sim(twoClicks(), { 0: A, 1: B });
+    b.at = '/anything';
+    b.play();
+    b.until(99_999);
+    expect(b.kinds()).not.toContain('page');
+  });
+
+  it('catches up when the viewer has gone ahead: jumps to the first later step on their page', () => {
+    const tr = trace({ steps: [
+      { type: 'click', target: { sel: '#a' }, t: 1000, page: '/app' },
+      { type: 'click', target: { sel: '#b' }, t: 2000, page: '/app/tasks/new' },
+      { type: 'click', target: { sel: '#c' }, t: 3000 },
+      { type: 'click', target: { sel: '#d' }, t: 4000, page: '/app/tasks/*/run' },
+    ] });
+    const D = box(300, 300);
+    const sim = new Sim(tr, { 0: A, 1: B, 2: B, 3: D });
+    sim.at = '/app';
+    sim.play();
+    sim.until(1300);
+    expect(sim.s.phase).toBe('waiting'); // step 1 wants /app/tasks/new; still on /app = not moved yet
+    sim.run(500);
+    expect([sim.s.phase, sim.s.i]).toEqual(['waiting', 1]);
+    sim.at = '/elsewhere'; // left, but not for a page the trace knows
+    sim.run(50);
+    expect([sim.s.phase, sim.s.i]).toEqual(['waiting', 1]);
+    sim.at = '/app/tasks/42/run'; // ahead of the guide
+    sim.run(50);
+    expect(sim.s.i).toBe(3);
+    sim.until(99_999);
+    expect(sim.fx.filter((f) => f.fx === 'step').map((f) => (f as { i: number }).i)).toEqual([0, 3]);
+    expect(sim.s.phase).toBe('ended');
+  });
+
+  it('never skips the start, and catching up wins over asking (no navigate back)', () => {
+    const tr = trace({ steps: [
+      { type: 'note', say: 'a', t: 0, page: '/one' },
+      { type: 'note', say: 'b', t: 3000, page: '/two' },
+      { type: 'note', say: 'c', t: 6000, page: '/three' },
+    ] });
+    const start = new Sim(tr);
+    start.at = '/three';
+    start.play();
+    start.run(50);
+    expect([start.s.phase, start.s.i]).toEqual(['waiting', 0]);
+    const sim = new Sim(tr);
+    sim.at = '/one';
+    sim.play();
+    sim.run(1000);
+    sim.at = '/three';
+    sim.until(99_999);
+    expect(sim.fx.filter((f) => f.fx === 'page')).toEqual([]);
+    expect(sim.fx.filter((f) => f.fx === 'step').map((f) => (f as { i: number }).i)).toEqual([0, 2]);
   });
 });

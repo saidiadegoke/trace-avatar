@@ -70,6 +70,7 @@
         "duration": { "type": "number", "minimum": 0 },
         "hold": { "type": "number", "minimum": 0 },
         "timeout": { "type": "number", "minimum": 0 },
+        "page": { "type": "string", "pattern": "^/", "maxLength": 300, "description": "The page this step happens on; * matches one path segment. Applies to later steps until another names a page." },
         "text": { "type": "string", "maxLength": 2000 },
         "mask": { "type": "boolean" },
         "keys": { "type": "string", "minLength": 1 },

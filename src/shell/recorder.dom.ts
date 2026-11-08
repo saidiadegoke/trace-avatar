@@ -10,7 +10,7 @@
  */
 
 import { build } from '../core/build';
-import type { Draft } from '../core/build';
+import type { Draft, ScrollMode } from '../core/build';
 import { parse } from '../core/format';
 import type { Avatar, Trace } from '../core/format';
 import { isSecret, maskText, shouldMask } from '../core/mask';
@@ -19,7 +19,7 @@ import { next, recClock, recElapsed, recPause, recResume } from '../core/recorde
 import type { RecClock, RecorderAction, RecorderState } from '../core/recorder-state';
 import { ring } from '../core/ring';
 import { createEmitter } from './emitter';
-import { buildTarget, meaningful } from './selector.dom';
+import { buildTarget, meaningful, pagePattern } from './selector.dom';
 
 export interface RecorderOptions {
   /** Where targets are described relative to. Default: document. */
@@ -37,6 +37,10 @@ export interface RecorderOptions {
   ignore?: string;
   title?: string;
   avatar?: Avatar;
+  /** Pauses longer than this play back as 1.5 s. Default 4000; 0 keeps real time. */
+  maxGapMs?: number;
+  /** 'auto' (default) drops scrolls the player does anyway; 'all' keeps every scroll. */
+  scrolls?: ScrollMode;
   /** Count synthetic (untrusted) events too. Default false; tests only. */
   allowSynthetic?: boolean;
   now?: () => number;
@@ -107,6 +111,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
   let clock: RecClock = recClock(0);
   let drafts: Draft[] = [];
   let lastSample = -Infinity;
+  let startUrl: string | undefined;
   let touches = 0;
   let pointers = 0;
   const ids = new WeakMap<object, string>();
@@ -120,7 +125,12 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
     if (!el || typeof (el as Element).closest !== 'function') return false;
     return !!el.closest(ignoreSel) || e.composedPath().some((n) => n instanceof Element && n.hasAttribute('data-trace-avatar'));
   };
-  const add = (d: Draft) => { drafts.push(d); emitter.emit('draft', d); };
+  const add = (d: Draft) => {
+    const path = win.location?.pathname;
+    if (path) d.page = pagePattern(path);
+    drafts.push(d);
+    emitter.emit('draft', d);
+  };
 
   const onMove = (e: PointerEvent) => {
     if (state !== 'recording' || ignored(e)) return;
@@ -206,6 +216,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
       drafts = [];
       samples.clear();
       lastSample = -Infinity;
+      startUrl = win.location?.pathname;
       touches = 0;
       pointers = 0;
       attach();
@@ -227,12 +238,15 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
         drafts,
         path: samples.toArray(),
         keepPath: opts.keepPath,
+        maxGapMs: opts.maxGapMs,
+        scrolls: opts.scrolls,
         avatar: opts.avatar,
         meta: {
           ...(opts.title ? { title: opts.title } : {}),
           recordedAt: new Date().toISOString(),
           viewport: { w: win.innerWidth || 1, h: win.innerHeight || 1 },
-          url: win.location?.pathname,
+          // Where playback must begin: the page the recording started on.
+          url: startUrl,
           ...(pointers && touches * 2 > pointers ? { pointer: 'touch' as const } : {}),
           ...(samples.dropped ? { truncated: true } : {}),
         },

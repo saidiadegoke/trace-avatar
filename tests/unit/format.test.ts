@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LIMITS, TIMING, labelOf, lastAtOrBefore, parse, stepAt, validate } from '../../src/core/format';
+import { LIMITS, TIMING, labelOf, lastAtOrBefore, pageMatches, parse, stepAt, validate } from '../../src/core/format';
 import type { Trace } from '../../src/core/format';
 
 const ok = (raw: unknown) => {
@@ -275,5 +275,29 @@ describe('lookups', () => {
     expect(labelOf({ text: 'New invoice', sel: '#n' })).toBe('New invoice');
     expect(labelOf({ sel: '#n' })).toBe('#n');
     expect(labelOf({ xy: { x: 1, y: 1 } })).toBe('the next element');
+  });
+});
+
+describe('pages', () => {
+  it('pageMatches: * is one segment; trailing slash, query, hash and encoding do not matter', () => {
+    const yes: Array<[string, string]> = [
+      ['/app', '/app'], ['/app', '/app/'], ['/app/tasks/*', '/app/tasks/bfd02a18-6a91'], ['/', '/'], ['/a/*/c', '/a/b/c'],
+      ['/app/tasks/new', '/app/tasks/new?x=1#top'], ['/caf%C3%A9', '/café'],
+    ];
+    const no: Array<[string, string]> = [['/app', '/app/tasks'], ['/app/tasks/*', '/app/tasks'], ['/app/tasks/*', '/app/tasks/1/run'], ['/a', '/b'], ['/', '/app']];
+    for (const [p, at] of yes) expect(pageMatches(p, at), `${p} ~ ${at}`).toBe(true);
+    for (const [p, at] of no) expect(pageMatches(p, at), `${p} !~ ${at}`).toBe(false);
+    expect(pageMatches('/%E0%A4%A', '/%E0%A4%A')).toBe(true); // a broken escape compares as written
+  });
+
+  it('a step page must be a path; later steps inherit it', () => {
+    for (const page of ['app', '', 7, '/'.padEnd(301, 'x')]) {
+      const v = validate({ version: 1, steps: [{ type: 'note', say: 'x', page }] });
+      expect(v.errors.map((e) => e.path)).toEqual(['steps[0].page']);
+    }
+    const r = parse({ version: 1, steps: [
+      { type: 'note', say: 'a' }, { type: 'note', say: 'b', page: '/app' }, { type: 'note', say: 'c' }, { type: 'note', say: 'd', page: '/app/tasks/*' },
+    ] });
+    expect(r.ok && r.trace.steps.map((s) => s.page)).toEqual([null, '/app', '/app', '/app/tasks/*']);
   });
 });

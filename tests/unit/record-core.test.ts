@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { MERGE, build, coalesce } from '../../src/core/build';
+import { GAPS, MERGE, build, coalesce, gapMap, pruneScrolls } from '../../src/core/build';
 import type { Draft } from '../../src/core/build';
 import { parse } from '../../src/core/format';
 import { isSecret, maskText, shouldMask } from '../../src/core/mask';
@@ -162,6 +162,8 @@ describe('build', () => {
         { kind: 'dblclick', t: 6000, key: 'a', target: tgt },
       ],
       path: [0, 10, 10, 100, 20, 20, 200, 30, 30, 300, 100, 30],
+      scrolls: 'all',
+      maxGapMs: 0,
     })!;
     expect(parse(tr).ok).toBe(true);
     expect(tr.steps).toEqual([
@@ -188,5 +190,88 @@ describe('build', () => {
     expect(build({ meta, drafts, path: [0, 1, 1, 10, 2, 2], keepPath: false })!.path).toBeUndefined();
     expect(build({ meta, drafts, path: [0, 1, 1] })!.path).toBeUndefined();
     expect(build({ meta, drafts })!.avatar).toBeUndefined();
+  });
+});
+
+describe('pruneScrolls', () => {
+  const sc = (t: number, key = 'window', y = t): Draft => ({ kind: 'scroll', t, key, to: { y } });
+  const click = (t: number): Draft => ({ kind: 'click', t, key: 'a', target: { sel: '#a' } });
+
+  it('drops a run of scrolls before an action on an element (the player scrolls there itself)', () => {
+    expect(pruneScrolls([sc(1), sc(2), click(3)]).map((d) => d.kind)).toEqual(['click']);
+    expect(pruneScrolls([sc(1), { kind: 'type', t: 2, key: 'f', target: { sel: '#f' }, text: 'x' }]).map((d) => d.kind)).toEqual(['type']);
+    expect(pruneScrolls([sc(1), { kind: 'key', t: 2, keys: 'Enter', target: { sel: '#f' } }]).map((d) => d.kind)).toEqual(['key']);
+  });
+  it('keeps where each scroller ended when nothing on an element follows', () => {
+    const out = pruneScrolls([click(0), sc(1, 'window', 10), sc(2, 'p', 5), sc(3, 'window', 30), { kind: 'key', t: 4, keys: 'Escape' }, sc(5, 'window', 50)]);
+    expect(out.map((d) => [d.kind, d.key, d.to?.y])).toEqual([
+      ['click', 'a', undefined], ['scroll', 'p', 5], ['scroll', 'window', 30], ['key', undefined, undefined], ['scroll', 'window', 50],
+    ]);
+  });
+  it("'all' keeps every scroll; neither mode changes its input", () => {
+    const input = [sc(1), sc(2), click(3)];
+    const copy = JSON.parse(JSON.stringify(input));
+    expect(pruneScrolls(input, 'all')).toEqual(input);
+    expect(pruneScrolls(input, 'all')).not.toBe(input);
+    pruneScrolls(input);
+    expect(input).toEqual(copy);
+  });
+});
+
+describe('gapMap', () => {
+  it('shortens only the stretches longer than the limit, and keeps the rest as recorded', () => {
+    const m = gapMap([1000, 2000, 30000, 31000], 4000, 1500);
+    expect([0, 1000, 2000, 30000, 31000].map(m)).toEqual([0, 1000, 2000, 3500, 4500]);
+    expect(m(16000)).toBe(2750); // halfway through the squeezed stretch
+    expect(m(31200)).toBe(4700);
+    expect(m(99999)).toBe(4500 + 1500); // past the last anchor: at most one idle stretch
+  });
+  it('squeezes a long start too, and never reorders anything', () => {
+    const m = gapMap([9000, 9500], 4000, 1500);
+    expect([m(9000), m(9500)]).toEqual([1500, 2000]);
+    fc.assert(fc.property(fc.array(fc.integer({ min: 0, max: 100000 }), { minLength: 1, maxLength: 20 }), fc.array(fc.integer({ min: 0, max: 120000 }), { minLength: 2, maxLength: 30 }), (anchors, ts) => {
+      const f = gapMap(anchors);
+      const sorted = [...ts].sort((a, b) => a - b).map(f);
+      return sorted.every((v, i) => i === 0 || v >= sorted[i - 1]);
+    }));
+  });
+  it('0 or Infinity keeps real time', () => {
+    expect(gapMap([50000], 0)(50000)).toBe(50000);
+    expect(gapMap([50000], Infinity)(50000)).toBe(50000);
+  });
+});
+
+describe('build defaults', () => {
+  it('drops scrolls the player does anyway and shortens long pauses, path included', () => {
+    const tr = build({
+      meta: {},
+      drafts: [
+        { kind: 'scroll', t: 500, key: 'window', to: { y: 100 } },
+        { kind: 'click', t: 9000, key: 'a', target: { sel: '#a' } },
+        { kind: 'click', t: 40000, key: 'b', target: { sel: '#b' } },
+      ],
+      path: [0, 1, 1, 8000, 5, 5, 9000, 10, 10, 39000, 20, 20],
+    })!;
+    expect(tr.steps.map((s) => [s.type, s.t])).toEqual([['click', GAPS.idleMs], ['click', 2 * GAPS.idleMs]]);
+    const times = (tr.path as number[][]).map((p) => p[0]);
+    expect(times[0]).toBe(0);
+    expect(times).toContain(GAPS.idleMs);
+    expect(times.every((t, i) => i === 0 || t >= times[i - 1])).toBe(true);
+    expect(Math.max(...times)).toBeLessThanOrEqual(2 * GAPS.idleMs);
+  });
+});
+
+describe('build: pages', () => {
+  it('a step names its page only when it changes', () => {
+    const tr = build({ meta: {}, maxGapMs: 0, drafts: [
+      { kind: 'click', t: 0, key: 'a', target: { sel: '#a' }, page: '/app' },
+      { kind: 'key', t: 10, keys: 'Enter', page: '/app' },
+      { kind: 'click', t: 20, key: 'b', target: { sel: '#b' }, page: '/app/tasks/new' },
+      { kind: 'click', t: 30, key: 'c', target: { sel: '#c' } },
+      { kind: 'click', t: 40, key: 'd', target: { sel: '#d' }, page: '/app' },
+    ] })!;
+    expect(tr.steps.map((s) => s.page)).toEqual(['/app', undefined, '/app/tasks/new', undefined, '/app']);
+    const r = parse(tr);
+    expect(r.ok && r.trace.steps.map((s) => s.page)).toEqual(['/app', '/app', '/app/tasks/new', '/app/tasks/new', '/app']);
   });
 });

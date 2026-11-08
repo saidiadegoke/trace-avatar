@@ -85,6 +85,17 @@ describe('<trace-avatar>', () => {
     expect(states).toEqual(['playing']);
   });
 
+  it('dispatches trace-page when the next step is on another page', async () => {
+    const el = make();
+    el.trace = { version: 1, steps: [{ type: 'note', say: 'hi', page: '/never-here' }] };
+    document.body.appendChild(el);
+    const pages: unknown[] = [];
+    el.addEventListener('trace-page', (e) => pages.push((e as CustomEvent).detail));
+    el.play();
+    await vi.waitFor(() => expect(pages).toHaveLength(1));
+    expect(pages[0]).toMatchObject({ index: 0, want: '/never-here' });
+  });
+
   it('dispatches trace-error for an invalid trace', () => {
     const el = make();
     const err = vi.fn();

@@ -47,6 +47,12 @@ export interface Step {
   hold?: number;
   /** `wait` (and any target): how long to look for the element (ms). */
   timeout?: number;
+  /**
+   * The page this step happens on: a path, `*` matching any one segment ("/app/tasks/*").
+   * Applies to the following steps too, until another step names a page. The player only looks
+   * for this step's element on a matching page; elsewhere it waits for the viewer (or navigates).
+   */
+  page?: string;
 }
 
 export interface Avatar { name?: string; image?: string; color?: string }
@@ -91,6 +97,8 @@ export interface NStep {
   readonly to: { x?: number; y?: number } | null;
   readonly by: { x?: number; y?: number } | null;
   readonly timeout: number;
+  /** The page this step happens on (inherited from earlier steps), or null for any page. */
+  readonly page: string | null;
 }
 
 export interface NormalisedTrace {
@@ -191,6 +199,7 @@ export function validate(raw: unknown): { ok: boolean; errors: ValidationError[]
       for (const k of ['duration', 'hold', 'timeout'] as const) if (s[k] !== undefined && !(isNum(s[k]) && s[k] >= 0)) err(`${p}.${k}`, 'must be a number ≥ 0');
       for (const k of ['highlight', 'pause', 'mask'] as const) if (s[k] !== undefined && typeof s[k] !== 'boolean') err(`${p}.${k}`, 'must be true or false');
       str(s.say, `${p}.say`, LIMITS.say);
+      if (s.page !== undefined && !(typeof s.page === 'string' && s.page.startsWith('/') && s.page.length <= 300)) err(`${p}.page`, 'must be a path starting with "/" (at most 300 characters)');
       if (s.target !== undefined) {
         const t = s.target;
         if (!isObj(t)) err(`${p}.target`, 'must be an object');
@@ -274,7 +283,9 @@ export function parse(raw: unknown): ParseResult {
   const end = new Float64Array(n);
   const steps: NStep[] = [];
   let prevEnd = 0;
+  let page: string | null = null;
   order.forEach(({ s }, i) => {
+    if (s.page !== undefined) page = s.page;
     // A `wait` only watches for its element and a `note` only talks; every other step with a target travels to it.
     const moves = !!s.target && s.type !== 'wait' && s.type !== 'note';
     const travel = moves ? (s.duration ?? TIMING.travelDefault) : 0;
@@ -305,6 +316,7 @@ export function parse(raw: unknown): ParseResult {
       to: s.type === 'scroll' ? (s.to ?? null) : null,
       by: s.type === 'scroll' ? (s.by ?? null) : null,
       timeout: s.timeout ?? (s.type === 'wait' ? TIMING.waitTimeout : TIMING.timeout),
+      page,
     });
   });
 
@@ -363,6 +375,22 @@ export function lastAtOrBefore(arr: Float64Array, t: number): number {
     if (arr[mid] <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1;
   }
   return ans;
+}
+
+const segs = (path: string) => path.split(/[?#]/)[0].split('/').filter(Boolean);
+
+/**
+ * Whether a page pattern ("/app/tasks/*") matches a path ("/app/tasks/bfd02a18-…").
+ * `*` matches any one segment; a trailing slash, the query and the hash don't matter.
+ */
+export function pageMatches(pattern: string, path: string): boolean {
+  const want = segs(pattern);
+  const have = segs(path);
+  return want.length === have.length && want.every((w, k) => w === '*' || w === have[k] || safeDecode(w) === safeDecode(have[k]));
+}
+
+function safeDecode(s: string): string {
+  try { return decodeURIComponent(s); } catch { return s; }
 }
 
 /** A short human label for a target, used in "Looking for …" captions. */

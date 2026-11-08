@@ -102,6 +102,29 @@ describe('useTrace / <TraceAvatar>', () => {
     expect(out.ctl).toBeNull();
   });
 
+  it('wires onPage, and navigate always calls the latest function', () => {
+    let now = 0;
+    const cbs: Array<() => void> = [];
+    const clock = { now: () => now, raf: (cb: () => void) => { cbs.push(cb); return cbs.length; }, caf: () => {} };
+    const tick = (n: number) => { for (let k = 0; k < n; k += 1) { now += 16; cbs.splice(0).forEach((cb) => cb()); } };
+    const out = { ctl: null as TraceController | null };
+    const paged: Trace = { version: 1, steps: [{ type: 'note', say: 'a', t: 100, page: '/one' }, { type: 'note', say: 'b', t: 3000, page: '/two' }] };
+    let path = '/elsewhere';
+    const first = vi.fn((p: string) => { path = p; });
+    const second = vi.fn((p: string) => { path = p; });
+    const onPage = vi.fn();
+    const currentPath = () => path;
+    act(() => root.render(<Probe trace={paged} out={out} navigate={first} onPage={onPage} currentPath={currentPath} ports={{ clock }} />));
+    act(() => { out.ctl!.play(); tick(3); });
+    expect(first).toHaveBeenCalledWith('/one');
+    expect(onPage).toHaveBeenCalledWith(expect.objectContaining({ index: 0, want: '/one', at: '/elsewhere' }));
+    // A new router function on re-render: same trace (no rebuild), the new function is used.
+    act(() => root.render(<Probe trace={paged} out={out} navigate={second} onPage={onPage} currentPath={currentPath} ports={{ clock }} />));
+    act(() => { tick(400); });
+    expect(second).toHaveBeenCalledWith('/two');
+    expect(first).toHaveBeenCalledTimes(1);
+  });
+
   it('enabled={false} creates nothing', () => {
     const out = { ctl: null as TraceController | null };
     act(() => root.render(<Probe trace={TRACE} out={out} enabled={false} />));

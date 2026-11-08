@@ -19,6 +19,8 @@ export class Sim {
   now = 1000;
   fx: Effect[] = [];
   looks: Record<number, Look | null>;
+  /** The viewer's page; undefined = unknown (every page matches). */
+  at: string | undefined = undefined;
   vp = { w: 1280, h: 800 };
   lookCalls = 0;
 
@@ -38,7 +40,7 @@ export class Sim {
 
   frame(dt = 16): Effect[] {
     this.now += dt;
-    return this.send({ kind: 'frame', now: this.now, look: this.look, vp: this.vp });
+    return this.send({ kind: 'frame', now: this.now, look: this.look, vp: this.vp, ...(this.at !== undefined ? { at: this.at } : {}) });
   }
 
   /** Run frames until `ms` of wall time has passed. */
@@ -58,6 +60,6 @@ export class Sim {
   play(): this { this.send({ kind: 'play' }); this.frame(); return this; }
 
   get t() { return this.s.clock.elapsed; }
-  get view(): View { return view(this.s, this.tr, this.look, this.cfg); }
+  get view(): View { return view(this.s, this.tr, this.look, this.cfg, this.at); }
   kinds(fx: Effect[] = this.fx) { return fx.map((f) => f.fx); }
 }

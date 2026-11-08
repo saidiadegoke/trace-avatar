@@ -3,7 +3,7 @@
  *
  * Custom-element adapter: connected → create, disconnected → destroy,
  * attribute change → rebuild. Events are re-dispatched as DOM events:
- * trace-step, trace-stalled, trace-state, trace-end, trace-error.
+ * trace-step, trace-stalled, trace-page, trace-state, trace-end, trace-error.
  */
 
 import { createTrace } from '../index';
@@ -78,6 +78,7 @@ export class TraceAvatarElement extends HTMLElement {
       const c = createTrace(o);
       c.on('step', (d) => fire('trace-step', d));
       c.on('stalled', (d) => fire('trace-stalled', d));
+      c.on('page', (d) => fire('trace-page', d));
       c.on('state', (d) => fire('trace-state', d));
       c.on('end', () => fire('trace-end'));
       c.on('error', (d) => fire('trace-error', d));

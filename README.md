@@ -75,7 +75,7 @@ const guide = useTrace({ trace: tour, controls: true });
 <trace-avatar src="/tours/invoice.trace.json" controls autoplay avatar-name="Sarah"></trace-avatar>
 ```
 
-Events: `trace-step`, `trace-stalled`, `trace-state`, `trace-end`, `trace-error`.
+Events: `trace-step`, `trace-stalled`, `trace-page`, `trace-state`, `trace-end`, `trace-error`.
 
 ## The trace format
 
@@ -108,10 +108,23 @@ A trace is plain JSON (`version: 1`). The schema ships at `trace-avatar/schema.j
 | `note` | a caption only | `say`, `hold?` |
 
 Any step may carry `say` (caption), `highlight` (ring), `pause` (stop after this step), `t` (ms from start; omit it
-and the step follows the previous one). Targets take any of `sel`, `role` + `name`, `text`, `xy`, plus `at: { rx, ry }`
+and the step follows the previous one), and `page` (the page it happens on, see below). Targets take any of `sel`, `role` + `name`, `text`, `xy`, plus `at: { rx, ry }`
 to aim at a point inside the element. An optional `path` (`[[t, x, y], …]`) replays a real pointer path.
 
 `validate(trace)` returns every problem with a path to it, and `createTrace` throws a `TraceError` for an invalid trace.
+
+## Guides across pages
+
+A step can name the page it happens on: `"page": "/app/tasks/new"`, with `*` for one path segment (`/app/tasks/*`).
+Later steps keep that page until another step names one. The recorder fills it in for you, with record ids as `*`.
+
+- On the wrong page the guide **doesn't search**, since a lookalike element on another page is not the one meant. It
+  waits with "Open /app/tasks/new to continue" and carries on when the viewer gets there. It never gives up.
+- Give it your router and it goes there itself: `createTrace({ trace, navigate: (path) => router.push(path) })`.
+  Only pages without `*` are navigated to; the `page` event (`{ index, want, at }`) tells you about every one.
+- If the viewer clicks through ahead of the guide, it catches up to the first later step on their page. It never
+  skips its own start.
+- Older traces without `page` play exactly as before.
 
 ## Options
 
@@ -129,6 +142,8 @@ to aim at a point inside the element. An optional `path` (`[[t, x, y], …]`) re
 | `keyboard` | `false` | Space/K play-pause, ←/→ steps (outside form fields) |
 | `reducedMotion` | `'auto'` | follows `prefers-reduced-motion` |
 | `seed` | trace's | changes the shape of authored paths |
+| `navigate` | — | `(path) => void`: go to a page the trace needs (e.g. `router.push`); without it the guide waits |
+| `currentPath` | `location.pathname` | where the viewer is, for apps that route without the address bar |
 | `locators` | — | your own element finders, tried first: `(target, root, step) => Element \| null` |
 
 Controller: `play()`, `pause()`, `toggle()`, `stop()`, `seek(ms)`, `next()`, `prev()`, `setRate(r)`, `on(event, fn)`,
@@ -147,8 +162,14 @@ const trace = rec.stop();   // a valid trace.json, or null if nothing happened
 
 - Clicks, double-clicks, typing (one step per field), shortcuts (`Mod+K`, Enter, Esc, Tab), page and panel scrolls,
   and the pointer path (sampled at ~30 Hz, simplified, capped in memory).
+- Pauses over 4 s play back as 1.5 s (`maxGapMs`, 0 keeps real time). Scrolls the player does anyway (it scrolls
+  each target into view) are dropped; `scrolls: 'all'` keeps them.
 - Each element is described by its most stable selector (`data-testid`, a human id, name, aria-label, then a short
-  path), plus role + name, text and the pixel point, so it can be found again after the page changes.
+  path), plus role + name, text and the pixel point, so it can be found again after the page changes. Addresses
+  with record ids are skipped, a link in two places is scoped by its landmark (`nav a[href=…]`), a card is named by
+  its title, and a field is never described by what was typed in it.
+- The pixel point is the last resort: while a step's element is missing, the guide waits ("Looking for …"), so a
+  viewer can click along through a multi-page app.
 - **Typed text is masked by default.** Mark demo fields `data-trace-reveal` to keep their text. Passwords, card,
   one-time-code and other secret fields are always masked. `data-trace-ignore` hides anything from the recorder.
 - The playground has a Record button: record, add captions in the JSON, play, download.
@@ -176,7 +197,7 @@ Dark-mode colours apply automatically unless you set your own.
 
 ## Size
 
-About 11 KB min+brotli for the player (locators, overlay, controls, validation); the recorder is a separate 6.5 KB entry. `size-limit` guards both in CI.
+About 12 KB min+brotli for the player (locators, overlay, controls, validation, pages); the recorder is a separate 7.5 KB entry. `size-limit` guards both in CI.
 
 ## Contributing
 

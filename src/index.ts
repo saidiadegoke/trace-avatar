@@ -31,9 +31,12 @@ export type { Locator, ClockPort, PagePort, RendererPort, InputPort } from './sh
 
 export interface StepEvent { index: number; step: NStep; resolvedBy: ResolvedBy | null; element: Element | null }
 export interface StalledEvent { index: number; step: NStep; reason: 'not-found' | 'wait-timeout' }
+/** The next step happens on another page. `want` may hold `*` segments; `at` is where the viewer is. */
+export interface PageEvent { index: number; step: NStep; want: string; at: string }
 export interface TraceEvents extends Record<string, unknown> {
   step: StepEvent;
   stalled: StalledEvent;
+  page: PageEvent;
   state: { phase: Phase };
   end: void;
   error: TraceError;
@@ -66,6 +69,14 @@ export interface TraceOptions {
   seed?: number;
   /** Default 'auto': follows prefers-reduced-motion. */
   reducedMotion?: boolean | 'auto';
+  /**
+   * Go to a page the trace needs (e.g. `(path) => router.push(path)`). Without it, the guide waits
+   * on the wrong page with "Open /path to continue" until the viewer gets there. Only called for
+   * pages without `*` segments, since those name no single address.
+   */
+  navigate?: (path: string) => void;
+  /** Where the viewer is. Default: location.pathname. */
+  currentPath?: () => string;
   /** Extra element locators, tried before the built-in ones. */
   locators?: Locator[];
   /** Replace the browser adapters (tests, embedding). */
@@ -107,6 +118,10 @@ function parseOrThrow(raw: unknown, seed?: number): NormalisedTrace {
 
 export function createTrace(opts: TraceOptions): TraceController {
   const win = typeof window !== 'undefined' ? window : undefined;
+  /** The viewer's page, or undefined when unknown (then every page matches). */
+  const where = (): string | undefined => {
+    try { return opts.currentPath ? opts.currentPath() : win?.location?.pathname; } catch { return undefined; }
+  };
   const doc = win?.document;
   const clock = opts.ports?.clock ?? browserClock;
   const page = opts.ports?.page ?? createPage({ root: opts.root, locators: opts.locators } as PageOptions);
@@ -203,6 +218,14 @@ export function createTrace(opts: TraceOptions): TraceController {
         case 'stalled':
           emitter.emit('stalled', { index: f.i, step: tr.steps[f.i], reason: f.reason });
           break;
+        case 'page': {
+          const at = where() ?? '';
+          emitter.emit('page', { index: f.i, step: tr.steps[f.i], want: f.want, at });
+          if (opts.navigate && !f.want.split('/').includes('*')) {
+            try { opts.navigate(f.want); } catch (e) { emitter.emit('error', new TraceError(`navigate(${f.want}) failed: ${(e as Error)?.message ?? e}`)); }
+          }
+          break;
+        }
         case 'end':
           emitter.emit('end', undefined);
           break;
@@ -231,9 +254,10 @@ export function createTrace(opts: TraceOptions): TraceController {
     const viewport = vp();
     const look = page.looker(tr, viewport);
     const before = s.phase;
-    const [next, fx] = update(s, { kind: 'frame', now: clock.now(), look, vp: viewport }, tr, cfg);
+    const at = where();
+    const [next, fx] = update(s, { kind: 'frame', now: clock.now(), look, vp: viewport, at }, tr, cfg);
     s = next;
-    const v: View = view(s, tr, look, cfg);
+    const v: View = view(s, tr, look, cfg, at);
     renderer.apply(v, viewport);
     run(fx);
     emitPhase(before);

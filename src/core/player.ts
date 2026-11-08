@@ -14,7 +14,7 @@
 
 import * as C from './clock';
 import type { Clock } from './clock';
-import { labelOf, lastAtOrBefore, stepAt } from './format';
+import { labelOf, lastAtOrBefore, pageMatches, stepAt } from './format';
 import type { NStep, NormalisedTrace, Point } from './format';
 import { curvePoint, samplePath } from './motion';
 
@@ -59,7 +59,7 @@ export type PlayerState = Common & (
   | { readonly phase: 'idle' }
   | { readonly phase: 'playing' }
   | { readonly phase: 'paused'; readonly why: PauseReason }
-  | { readonly phase: 'waiting'; readonly since: number; readonly for: 'target' | 'wait-step' }
+  | { readonly phase: 'waiting'; readonly since: number; readonly for: 'target' | 'wait-step' | 'page' }
   | { readonly phase: 'ended' }
 );
 
@@ -73,7 +73,8 @@ export type Msg =
   | { kind: 'prev' }
   | { kind: 'rate'; r: number }
   | { kind: 'takeover' }
-  | { kind: 'frame'; now: number; look: LookFn; vp: Viewport };
+  /** `at`: the page the viewer is on (location.pathname); left out, every page matches. */
+  | { kind: 'frame'; now: number; look: LookFn; vp: Viewport; at?: string };
 
 export type Effect =
   | { fx: 'step'; i: number; by: ResolvedBy | null }
@@ -81,6 +82,8 @@ export type Effect =
   | { fx: 'reveal'; i: number }
   | { fx: 'scroll'; i: number }
   | { fx: 'stalled'; i: number; reason: 'not-found' | 'wait-timeout' }
+  /** Step i happens on another page: the shell tells the host, and navigates when it may. */
+  | { fx: 'page'; i: number; want: string }
   | { fx: 'end' };
 
 export interface View {
@@ -183,13 +186,59 @@ function seekTo(s: PlayerState, t: number, tr: NormalisedTrace): PlayerState {
   return { ...base, phase: 'paused', why: 'user' };
 }
 
+/**
+ * The recorded pixel point is the last resort. For a target that also has a selector, a role or
+ * text, a pixel-only look counts as "not here yet" (the step waits, "Looking for…") until looking
+ * has given up on that step; then the point stands in. A target with only `xy` uses it at once.
+ */
+export function gate(look: LookFn, tr: NormalisedTrace, gaveUp: number, at?: string): LookFn {
+  return (i) => {
+    // An element on another page is not this step's element, whatever it looks like.
+    if (!onPage(tr.steps[i], at)) return null;
+    const l = look(i);
+    if (!l || l.by !== 'xy' || i === gaveUp) return l;
+    const t = tr.steps[i]?.target;
+    return t && (t.sel || t.role || t.text) ? null : l;
+  };
+}
+
+/** Whether the viewer is on step st's page (always, when the step names none or the page is unknown). */
+export function onPage(st: NStep | undefined, at: string | undefined): boolean {
+  return !st?.page || at === undefined || pageMatches(st.page, at);
+}
+
+/**
+ * When the viewer has gone on ahead of the guide (clicked through before it got there), the first
+ * step after i on their page, so the guide catches up; else -1. "Ahead" means they have left the
+ * page the guide is on (step i-1's) for a later step's page. Still being on that page just means
+ * they haven't moved yet. A guide never skips its own start.
+ */
+export function aheadOn(tr: NormalisedTrace, i: number, at: string | undefined): number {
+  if (at === undefined || i === 0) return -1;
+  const here = tr.steps[i - 1].page;
+  if (!here || pageMatches(here, at)) return -1;
+  for (let j = i + 1; j < tr.steps.length; j += 1) {
+    const p = tr.steps[j].page;
+    if (p && pageMatches(p, at)) return j;
+  }
+  return -1;
+}
+
+/** Jump to the start of step j with j still to play (a plain seek to a step's start can count it done). */
+function catchUp(s: PlayerState, j: number, tr: NormalisedTrace): PlayerState {
+  const n = seekTo(s, tr.travelStart[j], tr);
+  if (n.phase === 'idle') return n;
+  return { ...n, i: j, fired: Math.min(n.fired, j - 1), revealed: j - 1, leg: { i: j, from: n.pos, t0: tr.travelStart[j] } };
+}
+
 function frame(s: PlayerState, m: Extract<Msg, { kind: 'frame' }>, tr: NormalisedTrace, cfg: Config): [PlayerState, Effect[]] {
   if (s.phase === 'idle') return [s, NONE];
   const fx: Effect[] = [];
+  const at = (st: PlayerState) => ({ ...m, look: gate(m.look, tr, st.gaveUp, m.at) });
   let next: PlayerState = s;
-  if (s.phase === 'playing') next = advance(s, m, tr, cfg, fx);
-  else if (s.phase === 'waiting') next = waitFrame(s, m, tr, fx);
-  return [withPose(next, m, tr, cfg), fx];
+  if (s.phase === 'playing') next = advance(s, at(s), tr, cfg, fx);
+  else if (s.phase === 'waiting') next = waitFrame(s, at(s), tr, fx);
+  return [withPose(next, at(next), tr, cfg), fx];
 }
 
 function advance(s: PlayerState, m: Extract<Msg, { kind: 'frame' }>, tr: NormalisedTrace, cfg: Config, fx: Effect[]): PlayerState {
@@ -203,6 +252,17 @@ function advance(s: PlayerState, m: Extract<Msg, { kind: 'frame' }>, tr: Normali
 
   for (;;) {
     const st = tr.steps[i];
+
+    // The next step is on another page: say so at once (not when its travel would start), don't
+    // search, and wait for the viewer (or the host) to get there.
+    if (fired < i && !onPage(st, m.at)) {
+      const j = aheadOn(tr, i, m.at);
+      if (j >= 0) return catchUp({ ...build(), phase: 'playing' }, j, tr);
+      t = Math.min(Math.max(prevT, t), st.travelStart);
+      fx.push({ fx: 'page', i, want: st.page! });
+      return { ...build(), phase: 'waiting', since: m.now, for: 'page' };
+    }
+
     if (t < st.travelStart) break;
 
     // Entering this step: its element must be there before the cursor sets off.
@@ -217,7 +277,7 @@ function advance(s: PlayerState, m: Extract<Msg, { kind: 'frame' }>, tr: Normali
 
     if (fired < i && t >= st.at) {
       fired = i;
-      const l = st.target && gaveUp !== i ? m.look(i) : null;
+      const l = st.target ? m.look(i) : null;
       fx.push({ fx: 'step', i, by: l ? l.by : null });
       if ((st.type === 'click' || st.type === 'dblclick') && l) {
         const p = pointOf(l, st);
@@ -253,6 +313,12 @@ function waitFrame(s: Extract<PlayerState, { phase: 'waiting' }>, m: Extract<Msg
   const st = tr.steps[s.i];
   // Keep the clock's wall time fresh so leaving the wait adds nothing for the time spent waiting.
   const clock = C.hold(s.clock, m.now);
+  // A page wait has no timeout: the viewer may take a while to get there.
+  if (s.for === 'page') {
+    if (onPage(st, m.at)) return { ...common(s), clock, leg: { i: s.i, from: s.pos, t0: clock.elapsed }, phase: 'playing' };
+    const j = aheadOn(tr, s.i, m.at);
+    return j >= 0 ? catchUp({ ...s, clock }, j, tr) : { ...s, clock };
+  }
   if (m.look(s.i)) return { ...common(s), clock, leg: { i: s.i, from: s.pos, t0: clock.elapsed }, phase: 'playing' };
   if (m.now - s.since >= st.timeout) {
     fx.push({ fx: 'stalled', i: s.i, reason: st.type === 'wait' ? 'wait-timeout' : 'not-found' });
@@ -273,7 +339,7 @@ function withPose(s: PlayerState, m: Extract<Msg, { kind: 'frame' }>, tr: Normal
 
   const anchor = (j: number): Point | null => {
     const st = tr.steps[j];
-    if (!st.moves || s.gaveUp === j) return null;
+    if (!st.moves) return null;
     const l = look(j);
     return l ? pointOf(l, st) : null;
   };
@@ -362,9 +428,15 @@ export function formatKeys(keys: string, mac: boolean): string {
 }
 
 /** What the overlay should show now. Pure; reads the page only through `look`. */
-export function view(s: PlayerState, tr: NormalisedTrace, look: LookFn, cfg: Config): View {
+export function view(s: PlayerState, tr: NormalisedTrace, rawLook: LookFn, cfg: Config, at?: string): View {
+  const look = gate(rawLook, tr, s.gaveUp, at);
   const count = tr.steps.length;
   const hidden: View = { phase: s.phase, cursor: { x: 0, y: 0, pressed: false, visible: false }, ring: null, caption: null, chip: null, index: s.i, count };
+  // On the wrong page the caption says where to go, even before the cursor has appeared.
+  if (s.phase === 'waiting' && s.for === 'page') {
+    const want = tr.steps[s.i].page!.replace(/\/\*(?=\/|$)/g, '/…');
+    return { ...hidden, cursor: { ...hidden.cursor, x: s.pos?.x ?? 0, y: s.pos?.y ?? 0, visible: !!s.pos }, caption: { text: `Open ${want} to continue`, key: -1000 - s.i } };
+  }
   if (s.phase === 'idle' || !s.pos) return hidden;
   const t = s.clock.elapsed;
   const step = tr.steps[s.i];

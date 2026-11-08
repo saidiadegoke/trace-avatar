@@ -2,7 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse } from '../../src/core/format';
 import { createRecorder, comboOf, factsOf } from '../../src/record/index';
-import { bestSelector, buildTarget, candidates, looksGenerated, meaningful, pathSelector, roleOf } from '../../src/shell/selector.dom';
+import { bestSelector, buildTarget, candidates, isEditableTarget, looksGenerated, meaningful, pathSelector, roleOf, textBlocks, volatileHref, pagePattern } from '../../src/shell/selector.dom';
+import { byRoleAndName, bySelector, byText } from '../../src/shell/page.dom';
 import { html, setRect } from './dom-helpers';
 
 afterEach(() => { document.body.innerHTML = ''; });
@@ -271,5 +272,116 @@ describe('createRecorder', () => {
     for (let i = 0; i < 5; i += 1) { now += 50; fire($('#b'), 'pointermove', { clientX: i * 10, clientY: 0 }); }
     fire($('#b'), 'click');
     expect(rec.stop()!.path).toBeUndefined();
+  });
+});
+
+describe('targets that stay findable (from the DutyCaptain recording)', () => {
+  it('an address with a record id is not a stable selector', () => {
+    for (const h of ['/app/tasks/bfd02a18-6a91-4a98-93fa-01e7d7db373d', '/orders/4213', '/u/:r1:', '/p/a1b2c3d4e5f6']) expect(volatileHref(h), h).toBe(true);
+    for (const h of ['/app', '/app/tasks/new', '/pricing#plans', '/docs/getting-started', '/team/row-12']) expect(volatileHref(h), h).toBe(false);
+    html('<a href="/app/tasks/bfd02a18-6a91-4a98-93fa-01e7d7db373d">T</a>');
+    expect(candidates($('a'))).toEqual([]);
+  });
+
+  it('tells the same link apart by the landmark around it', () => {
+    html(`<aside><nav><a href="/app/tasks/new">New task</a></nav></aside>
+      <main><header><a href="/app/tasks/new" id="r:9:">New task</a></header></main>`);
+    const [side, head] = Array.from(document.querySelectorAll('a'));
+    expect(bestSelector(side, document)).toBe('nav a[href="/app/tasks/new"]');
+    expect(bestSelector(head, document)).toBe('header a[href="/app/tasks/new"]');
+    for (const el of [side, head]) expect(document.querySelectorAll(bestSelector(el, document)!)).toHaveLength(1);
+  });
+
+  it('skips a landmark that is not unique and tries the next one out, or a role', () => {
+    html(`<nav aria-label="Main"><div><nav><a href="/x">X</a></nav></div></nav><nav><a href="/x">X</a></nav>
+      <div role="banner"><a href="/x">X</a></div>`);
+    const links = document.querySelectorAll('a');
+    expect(bestSelector(links[0], document)).toBe('nav[aria-label="Main"] a[href="/x"]');
+    expect(bestSelector(links[2], document)).toBe('[role="banner"] a[href="/x"]');
+    expect(document.querySelector(bestSelector(links[1], document)!)).toBe(links[1]);
+  });
+
+  it('a field never carries what was typed in it as its text or name', () => {
+    html(`<div contenteditable="true" aria-label="Objective" id="obj">Th</div>
+      <div contenteditable="true" id="bare">Hello there</div><div role="textbox" id="rt">abc</div>
+      <div contenteditable="true"><p id="inner">x</p></div><div contenteditable="false" id="off">y</div>`);
+    expect(buildTarget($('#obj'))).toMatchObject({ sel: '#obj' });
+    expect(buildTarget($('#obj')).text).toBeUndefined();
+    const bare = buildTarget($('#bare'));
+    expect([bare.text, bare.name]).toEqual([undefined, undefined]);
+    expect(buildTarget($('#rt'))).not.toHaveProperty('text');
+    expect([isEditableTarget($('#inner')), isEditableTarget($('#off')), isEditableTarget($('#rt'))]).toEqual([true, false, true]);
+  });
+
+  it('a card is known by its title, not its status, and the player still finds it', () => {
+    html(`<a href="/app/tasks/bfd02a18-6a91-4a98-93fa-01e7d7db373d" id="card"><div><span>Queued</span></div>
+      <div><p>This is a test task</p><span>just now</span></div><div>2%</div></a><a href="/new">New <b>invoice</b></a>`);
+    expect(textBlocks($('#card'))).toEqual(['Queued', 'This is a test task', 'just now', '2%']);
+    expect(textBlocks($('a[href="/new"]'))).toEqual(['New invoice']);
+    const tgt = buildTarget($('#card'));
+    expect(tgt).toMatchObject({ role: 'link', name: 'This is a test task', text: 'This is a test task' });
+    expect(tgt.sel).not.toContain('bfd02a18');
+    // The status moves on; the card is still found.
+    $('#card span').textContent = 'Running';
+    expect(byRoleAndName(tgt, document, {} as never)).toBe($('#card'));
+    expect(byText(tgt, document, {} as never)).not.toBeNull();
+    expect(buildTarget($('a[href="/new"]'))).toMatchObject({ name: 'New invoice', text: 'New invoice' });
+  });
+
+  it('a labelled element keeps its label as its name', () => {
+    html('<a href="/x" aria-label="Open task"><div>Queued</div><div>Title</div></a>');
+    expect(buildTarget($('a'))).toMatchObject({ name: 'Open task' });
+    expect(bySelector(buildTarget($('a')), document, {} as never)).toBe($('a'));
+  });
+});
+
+describe('createRecorder: where it started, gaps and scrolls', () => {
+  const fire = (el: EventTarget, type: string, init: Record<string, unknown> = {}) => el.dispatchEvent(new MouseEvent(type, { bubbles: true, ...init }));
+
+  it('meta.url is the page the recording started on', () => {
+    history.pushState({}, '', '/app');
+    html('<button id="go">Go</button>');
+    let now = 0;
+    const rec = createRecorder({ allowSynthetic: true, now: () => now });
+    rec.start();
+    now = 100; fire($('#go'), 'click');
+    history.pushState({}, '', '/app/tasks/123');
+    expect(rec.stop()!.meta?.url).toBe('/app');
+  });
+
+  it('passes maxGapMs and scrolls through to the trace', () => {
+    html('<button id="go">Go</button>');
+    let now = 0;
+    const run = (o: Parameters<typeof createRecorder>[0]) => {
+      const rec = createRecorder({ allowSynthetic: true, now: () => now, ...o });
+      now = 0; rec.start();
+      now = 1000; document.dispatchEvent(new Event('scroll'));
+      now = 30000; fire($('#go'), 'click');
+      return rec.stop()!.steps.map((s) => [s.type, s.t]);
+    };
+    expect(run({})).toEqual([['click', 1500]]); // the scroll is dropped; the 30 s wait becomes 1.5 s
+    expect(run({ scrolls: 'all', maxGapMs: 0 })).toEqual([['scroll', 1000], ['click', 30000]]);
+  });
+});
+
+describe('pages', () => {
+  it('pagePattern turns record ids into *', () => {
+    expect(pagePattern('/app/tasks/bfd02a18-6a91-4a98-93fa-01e7d7db373d')).toBe('/app/tasks/*');
+    expect(pagePattern('/orders/4213/items?x=1')).toBe('/orders/*/items');
+    expect(pagePattern('/app/tasks/new/')).toBe('/app/tasks/new');
+    expect(pagePattern('/')).toBe('/');
+  });
+
+  it('the recorder notes the page of each step as the viewer moves around', () => {
+    history.pushState({}, '', '/app');
+    html('<button id="go">Go</button>');
+    let now = 0;
+    const rec = createRecorder({ allowSynthetic: true, now: () => now });
+    rec.start();
+    now = 100; $('#go').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    history.pushState({}, '', '/app/tasks/bfd02a18-6a91-4a98');
+    now = 200; $('#go').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    now = 300; $('#go').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(rec.stop()!.steps.map((s) => s.page)).toEqual(['/app', '/app/tasks/*', undefined]);
   });
 });

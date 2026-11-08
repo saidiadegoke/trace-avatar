@@ -296,3 +296,66 @@ describe('createTrace', () => {
     t.destroy();
   });
 });
+
+describe('pages', () => {
+  const PAGED: Trace = { version: 1, steps: [
+    { type: 'click', target: { sel: '#a' }, t: 300, page: '/start' },
+    { type: 'click', target: { sel: '#b' }, t: 900, page: '/tasks/*' },
+  ] };
+
+  it('tells the host and navigates to a page it can name, then plays on', async () => {
+    let path = '/elsewhere';
+    const navigate = vi.fn((p: string) => { path = p; });
+    const page = vi.fn();
+    const t = make({ trace: PAGED, navigate, currentPath: () => path });
+    await t.ready;
+    t.on('page', page);
+    t.play();
+    clock.frame();
+    expect(page).toHaveBeenCalledWith(expect.objectContaining({ index: 0, want: '/start', at: '/elsewhere' }));
+    expect(navigate).toHaveBeenCalledWith('/start');
+    clock.run(800);
+    expect(t.index).toBe(1);
+    expect(t.state).toBe('waiting');
+    // "/tasks/*" names no single address: the host hears about it, but nothing navigates.
+    expect(page).toHaveBeenLastCalledWith(expect.objectContaining({ index: 1, want: '/tasks/*', at: '/start' }));
+    expect(navigate).toHaveBeenCalledTimes(1);
+    path = '/tasks/42';
+    clock.run(2000);
+    expect(t.state).toBe('ended');
+  });
+
+  it('without navigate, it waits with a caption; a failing navigate is reported', async () => {
+    const t = make({ trace: PAGED, currentPath: () => '/elsewhere' });
+    await t.ready;
+    t.play();
+    clock.run(5000);
+    expect(t.state).toBe('waiting');
+    const host = document.querySelector('[data-trace-avatar]')!;
+    expect(host.shadowRoot!.textContent).toContain('Open /start to continue');
+    t.destroy();
+
+    const errors = vi.fn();
+    const u = make({ trace: PAGED, currentPath: () => '/elsewhere', navigate: () => { throw new Error('no router'); } });
+    await u.ready;
+    u.on('error', errors);
+    u.play();
+    clock.frame();
+    expect(errors.mock.calls[0][0].message).toMatch(/navigate\(\/start\) failed: no router/);
+  });
+
+  it('reads location.pathname by default, and treats a throwing currentPath as unknown', async () => {
+    history.pushState({}, '', '/start');
+    const t = make({ trace: PAGED });
+    await t.ready;
+    t.play();
+    clock.run(1500);
+    expect([t.index, t.state]).toEqual([1, 'waiting']); // played step 0 on /start, now wants /tasks/*
+    t.destroy();
+    const u = make({ trace: PAGED, currentPath: () => { throw new Error('x'); } });
+    await u.ready;
+    u.play();
+    clock.run(2000);
+    expect(u.state).toBe('ended');
+  });
+});

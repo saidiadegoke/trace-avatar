@@ -25,9 +25,17 @@ export interface Draft {
   mask?: boolean;
   keys?: string;
   to?: { x?: number; y?: number };
+  /** The page it happened on (a pattern, ids as `*`). */
+  page?: string;
 }
 
 export const MERGE = { dblclickMs: 500, typeGapMs: 2000, scrollGapMs: 300 } as const;
+
+/** A pause longer than maxGapMs (a file picker, a phone call) plays back as idleMs. */
+export const GAPS = { maxGapMs: 4000, idleMs: 1500 } as const;
+
+/** 'auto': drop scrolls the player would do anyway (it scrolls each target into view). 'all': keep every one. */
+export type ScrollMode = 'auto' | 'all';
 
 /** Merge the noise. Exported for tests. Never changes its input. */
 export function coalesce(drafts: readonly Draft[]): Draft[] {
@@ -62,6 +70,61 @@ export function coalesce(drafts: readonly Draft[]): Draft[] {
   return out.map((x) => x.d);
 }
 
+const TARGETED: ReadonlySet<DraftKind> = new Set(['click', 'dblclick', 'type']);
+
+/**
+ * In 'auto' mode, a run of scrolls followed by an action on an element is dropped (the player
+ * scrolls that element into view itself); any other run keeps only where each scroller ended.
+ * Exported for tests. Never changes its input.
+ */
+export function pruneScrolls(drafts: readonly Draft[], mode: ScrollMode = 'auto'): Draft[] {
+  if (mode === 'all') return drafts.slice();
+  const out: Draft[] = [];
+  let run: Draft[] = [];
+  const flush = (nextDraft: Draft | undefined) => {
+    if (!run.length) return;
+    const revealed = nextDraft && (TARGETED.has(nextDraft.kind) || (nextDraft.kind === 'key' && !!nextDraft.target));
+    if (!revealed) {
+      const last = new Map<string, Draft>();
+      for (const d of run) { const k = d.key ?? 'window'; last.delete(k); last.set(k, d); }
+      out.push(...last.values());
+    }
+    run = [];
+  };
+  for (const d of drafts) {
+    if (d.kind === 'scroll') { run.push(d); continue; }
+    flush(d);
+    out.push(d);
+  }
+  flush(undefined);
+  return out;
+}
+
+/**
+ * A time map that shortens every quiet stretch longer than maxGapMs to idleMs, keeping the
+ * order of everything. Anchors are the moments that matter (step times); the pointer path in
+ * between is squeezed with its stretch. Exported for tests.
+ */
+export function gapMap(anchors: readonly number[], maxGapMs: number = GAPS.maxGapMs, idleMs: number = GAPS.idleMs): (t: number) => number {
+  if (!(maxGapMs > 0) || !Number.isFinite(maxGapMs)) return (t) => t;
+  const idle = Math.min(idleMs, maxGapMs);
+  const at = Array.from(new Set([0, ...anchors.filter((a) => a > 0)])).sort((a, b) => a - b);
+  const to: number[] = [0];
+  for (let k = 1; k < at.length; k += 1) {
+    const len = at[k] - at[k - 1];
+    to.push(to[k - 1] + (len > maxGapMs ? idle : len));
+  }
+  return (t) => {
+    if (t <= 0) return t;
+    let k = at.length - 1;
+    while (k > 0 && at[k] > t) k -= 1;
+    // Past the last anchor: never more than one idle stretch.
+    if (k === at.length - 1) return to[k] + Math.min(t - at[k], idle);
+    const len = at[k + 1] - at[k];
+    return to[k] + (t - at[k]) * ((to[k + 1] - to[k]) / len);
+  };
+}
+
 function toStep(d: Draft): Step {
   const t = Math.round(d.t);
   switch (d.kind) {
@@ -89,19 +152,36 @@ export interface BuildInput {
   avatar?: Avatar;
   /** Keep the recorded pointer path (default true). */
   keepPath?: boolean;
+  /** Pauses longer than this play back as GAPS.idleMs. Default GAPS.maxGapMs; 0 keeps real time. */
+  maxGapMs?: number;
+  /** Default 'auto'. */
+  scrolls?: ScrollMode;
 }
 
 /** Build a trace, or null when nothing worth replaying was recorded. */
 export function build(input: BuildInput): Trace | null {
-  const steps = coalesce(input.drafts)
-    .filter((d) => (d.kind === 'key' ? !!d.keys : d.kind === 'scroll' ? true : !!d.target))
-    .map(toStep);
-  if (!steps.length) return null;
+  const kept = pruneScrolls(
+    coalesce(input.drafts).filter((d) => (d.kind === 'key' ? !!d.keys : d.kind === 'scroll' ? true : !!d.target)),
+    input.scrolls,
+  );
+  if (!kept.length) return null;
+  const wantPath = input.keepPath !== false && !!input.path && input.path.length >= 6;
+  // The path's end is an anchor only past the last step (a tail to squeeze), never between steps.
+  const lastPath = wantPath ? input.path![input.path!.length - 3] : -Infinity;
+  const pathEnd = lastPath > kept[kept.length - 1].t ? [lastPath] : [];
+  const map = gapMap([...kept.map((d) => d.t), ...pathEnd], input.maxGapMs ?? GAPS.maxGapMs);
+  // A step names its page only when it differs from the step before; later steps inherit it.
+  let lastPage: string | undefined;
+  const steps = kept.map((d) => {
+    const step = toStep({ ...d, t: map(d.t) });
+    if (d.page && d.page !== lastPage) { step.page = d.page; lastPage = d.page; }
+    return step;
+  });
   let path: number[][] | null = null;
-  if (input.keepPath !== false && input.path && input.path.length >= 6) {
-    const simple = simplify(input.path, 2);
+  if (wantPath) {
+    const simple = simplify(input.path!, 2);
     path = [];
-    for (let i = 0; i < simple.length; i += 3) path.push([Math.round(simple[i]), Math.round(simple[i + 1]), Math.round(simple[i + 2])]);
+    for (let i = 0; i < simple.length; i += 3) path.push([Math.round(map(simple[i])), Math.round(simple[i + 1]), Math.round(simple[i + 2])]);
   }
   return {
     version: 1,

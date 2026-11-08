@@ -1,6 +1,6 @@
 {
   "name": "trace-avatar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Turn a list of steps into a smooth, human-looking ghost-cursor walkthrough on your real page. Element-anchored, zero dependencies.",
   "main": "./dist/index.cjs",
   "scripts": {
@@ -95,7 +95,7 @@
     {
       "name": "core (ESM)",
       "path": "dist/index.js",
-      "limit": "12 KB"
+      "limit": "12.5 KB"
     },
     {
       "name": "react adapter + core",
@@ -108,7 +108,7 @@
     {
       "name": "CDN build",
       "path": "dist/trace.min.js",
-      "limit": "12 KB"
+      "limit": "12.5 KB"
     },
     {
       "name": "recorder",

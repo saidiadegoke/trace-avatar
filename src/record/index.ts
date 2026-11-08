@@ -9,7 +9,7 @@
 export { createRecorder, comboOf, factsOf } from '../shell/recorder.dom';
 export type { Recorder, RecorderOptions, RecorderEvents } from '../shell/recorder.dom';
 export type { RecorderState } from '../core/recorder-state';
-export { build, coalesce } from '../core/build';
-export type { Draft, DraftKind } from '../core/build';
+export { build, coalesce, pruneScrolls, gapMap, GAPS, MERGE } from '../core/build';
+export type { Draft, DraftKind, ScrollMode } from '../core/build';
 export { shouldMask, isSecret, maskText } from '../core/mask';
-export { buildTarget, bestSelector, candidates, pathSelector, looksGenerated, roleOf, meaningful } from '../shell/selector.dom';
+export { buildTarget, bestSelector, candidates, pathSelector, looksGenerated, roleOf, meaningful, volatileHref, isEditableTarget, textBlocks, pagePattern } from '../shell/selector.dom';

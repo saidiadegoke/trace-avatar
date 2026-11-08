@@ -6,12 +6,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createTrace } from '../index';
-import type { StalledEvent, StepEvent, TraceController, TraceOptions } from '../index';
+import type { PageEvent, StalledEvent, StepEvent, TraceController, TraceOptions } from '../index';
 import type { Phase } from '../core/player';
 
 export interface TraceHandlers {
   onStep?: (e: StepEvent) => void;
   onStalled?: (e: StalledEvent) => void;
+  /** The next step is on another page (see `navigate`). */
+  onPage?: (e: PageEvent) => void;
   onEnd?: () => void;
   onState?: (phase: Phase) => void;
   onError?: (e: Error) => void;
@@ -28,7 +30,7 @@ export function optionsKey(o: UseTraceOptions): string {
 
 export function useTrace(opts: UseTraceOptions): TraceController | null {
   const [ctl, setCtl] = useState<TraceController | null>(null);
-  const handlers = useRef<TraceHandlers>(opts);
+  const handlers = useRef<UseTraceOptions>(opts);
   handlers.current = opts;
   const key = optionsKey(opts);
 
@@ -36,7 +38,8 @@ export function useTrace(opts: UseTraceOptions): TraceController | null {
     if (opts.enabled === false) { setCtl(null); return undefined; }
     let c: TraceController;
     try {
-      c = createTrace(opts);
+      // Read navigate from the latest render, so a new router function needs no rebuild.
+      c = createTrace({ ...opts, navigate: opts.navigate ? (path) => handlers.current.navigate?.(path) : undefined });
     } catch (err) {
       handlers.current.onError?.(err as Error);
       setCtl(null);
@@ -45,6 +48,7 @@ export function useTrace(opts: UseTraceOptions): TraceController | null {
     const offs = [
       c.on('step', (e) => handlers.current.onStep?.(e)),
       c.on('stalled', (e) => handlers.current.onStalled?.(e)),
+      c.on('page', (e) => handlers.current.onPage?.(e)),
       c.on('end', () => handlers.current.onEnd?.()),
       c.on('state', (e) => handlers.current.onState?.(e.phase)),
       c.on('error', (e) => handlers.current.onError?.(e)),

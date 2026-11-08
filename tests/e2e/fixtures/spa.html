@@ -1,0 +1,40 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>SPA fixture</title>
+<style>
+  body { margin: 0; font: 15px system-ui; display: flex; min-height: 200vh; }
+  aside { width: 220px; padding: 16px; border-right: 1px solid #ddd; }
+  main { flex: 1; padding: 16px; }
+  header { display: flex; justify-content: space-between; }
+  a.btn { display: inline-block; padding: 8px 12px; background: #2456d8; color: #fff; border-radius: 6px; text-decoration: none; }
+  .card { display: block; border: 1px solid #ddd; padding: 12px; margin-top: 12px; color: inherit; text-decoration: none; }
+  [contenteditable] { border: 1px solid #aaa; min-height: 80px; padding: 8px; }
+  @media (max-width: 600px) { body { flex-direction: column; } aside { width: auto; } }
+</style></head>
+<body>
+  <!-- Shaped like a Next.js app: one link in two places, a rich-text box, cards whose address holds a record id. -->
+  <aside><nav>
+    <a class="btn" href="/app/tasks/new">New task</a>
+    <p><a href="/app">Overview</a></p>
+  </nav></aside>
+  <main id="view"></main>
+  <script>
+    const views = {
+      '/app': () => `<header><h1>Overview</h1><a class="btn" href="/app/tasks/new">New task</a></header>
+        <a class="card" href="/app/tasks/bfd02a18-6a91-4a98-93fa-01e7d7db373d"><div><span id="status">Queued</span></div>
+          <div><p>This is a test task</p><span>just now</span></div><div>2%</div></a>`,
+      '/app/tasks/new': () => `<h1>New task</h1><div contenteditable="true" aria-label="Objective" role="textbox"></div>
+        <p style="margin-top:900px"><button type="button">Start task</button></p>`,
+    };
+    function show(path) { document.getElementById('view').innerHTML = (views[path] || views['/app'])(); }
+    // Client-side navigation, like a Next.js router: the address changes, the page never reloads.
+    window.go = (path) => { history.pushState({}, '', path); show(path); };
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest('a[href^="/app"]');
+      if (!a) return;
+      e.preventDefault();
+      go(a.getAttribute('href'));
+    });
+    history.replaceState({}, '', '/app');
+    show('/app');
+  </script>
+</body></html>
