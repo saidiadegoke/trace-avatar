@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/trace-avatar/schema/trace.v1.json",
+  "title": "trace-avatar trace, version 1",
+  "type": "object",
+  "required": ["version", "steps"],
+  "properties": {
+    "version": { "const": 1 },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 1000 },
+        "recordedAt": { "type": "string", "maxLength": 1000 },
+        "url": { "type": "string", "maxLength": 1000 },
+        "viewport": {
+          "type": "object",
+          "required": ["w", "h"],
+          "properties": { "w": { "type": "number", "exclusiveMinimum": 0 }, "h": { "type": "number", "exclusiveMinimum": 0 } }
+        },
+        "seed": { "type": "number" },
+        "pointer": { "enum": ["mouse", "touch"] },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "avatar": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 80 },
+        "image": { "type": "string", "pattern": "^(https?:|data:image/|(?![a-zA-Z][a-zA-Z0-9+.-]*:))" },
+        "color": { "type": "string", "maxLength": 64 }
+      }
+    },
+    "steps": { "type": "array", "minItems": 1, "maxItems": 10000, "items": { "$ref": "#/$defs/step" } },
+    "path": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "array", "maxItems": 200000, "items": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } } },
+        { "type": "array", "maxItems": 600000, "items": { "type": "number" } }
+      ]
+    }
+  },
+  "$defs": {
+    "xy": {
+      "type": "object",
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "sel": { "type": "string", "maxLength": 1000 },
+        "role": { "type": "string", "maxLength": 40 },
+        "name": { "type": "string", "maxLength": 1000 },
+        "text": { "type": "string", "maxLength": 1000 },
+        "at": { "type": "object", "required": ["rx", "ry"], "properties": { "rx": { "type": "number" }, "ry": { "type": "number" } } },
+        "xy": { "type": "object", "required": ["x", "y"], "properties": { "x": { "type": "number" }, "y": { "type": "number" } } }
+      },
+      "anyOf": [{ "required": ["sel"] }, { "required": ["role"] }, { "required": ["text"] }, { "required": ["xy"] }],
+      "dependentRequired": { "name": ["role"] }
+    },
+    "step": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["move", "click", "dblclick", "type", "key", "scroll", "hover", "wait", "note"] },
+        "t": { "type": "number", "minimum": 0 },
+        "target": { "$ref": "#/$defs/target" },
+        "say": { "type": "string", "maxLength": 500 },
+        "highlight": { "type": "boolean" },
+        "pause": { "type": "boolean" },
+        "duration": { "type": "number", "minimum": 0 },
+        "hold": { "type": "number", "minimum": 0 },
+        "timeout": { "type": "number", "minimum": 0 },
+        "text": { "type": "string", "maxLength": 2000 },
+        "mask": { "type": "boolean" },
+        "keys": { "type": "string", "minLength": 1 },
+        "to": { "$ref": "#/$defs/xy" },
+        "by": { "$ref": "#/$defs/xy" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "enum": ["move", "click", "dblclick", "type", "hover", "wait"] } } }, "then": { "required": ["target"] } },
+        { "if": { "properties": { "type": { "const": "type" } } }, "then": { "required": ["text"] } },
+        { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["keys"] } },
+        { "if": { "properties": { "type": { "const": "note" } } }, "then": { "required": ["say"], "properties": { "say": { "minLength": 1 } } } },
+        { "if": { "properties": { "type": { "const": "scroll" } } }, "then": { "anyOf": [{ "required": ["to"] }, { "required": ["by"] }] } }
+      ]
+    }
+  }
+}

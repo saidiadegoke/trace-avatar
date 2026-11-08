@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>trace-avatar playground</title>
+  <style>
+    :root { color-scheme: light dark; --line: color-mix(in srgb, CanvasText 15%, transparent); }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); min-height: 100vh; }
+    @media (max-width: 860px) { body { grid-template-columns: 1fr; } }
+    .app header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+    .app main { max-width: 520px; margin: 32px auto; padding: 0 16px; display: grid; gap: 14px; }
+    label { display: grid; gap: 4px; font-weight: 600; }
+    input { font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: Canvas; color: CanvasText; }
+    button { font: inherit; padding: 9px 14px; border-radius: 8px; border: 0; background: #2456d8; color: #fff; cursor: pointer; }
+    button.ghost { background: transparent; color: inherit; border: 1px solid var(--line); }
+    .total { display: flex; justify-content: space-between; font-size: 18px; padding: 12px 0; border-top: 1px solid var(--line); }
+    aside { border-left: 1px solid var(--line); padding: 16px; display: grid; grid-template-rows: auto 1fr auto auto; gap: 10px; height: 100vh; position: sticky; top: 0; }
+    @media (max-width: 860px) { aside { height: auto; position: static; border-left: 0; border-top: 1px solid var(--line); } }
+    aside h1 { font-size: 16px; margin: 0; }
+    textarea { width: 100%; min-height: 280px; font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: Canvas; color: CanvasText; resize: vertical; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    #status { font-size: 13px; min-height: 1.5em; white-space: pre-wrap; }
+    #status.err { color: #c62828; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <strong>Invoices</strong>
+      <button data-testid="new-invoice">New invoice</button>
+    </header>
+    <main>
+      <label>Customer <input id="customer" placeholder="Who is it for?" data-trace-reveal></label>
+      <label>Amount (₦) <input id="amount" inputmode="numeric"></label>
+      <div class="total"><span>Total</span><span id="total">₦0</span></div>
+      <button id="send">Send invoice</button>
+    </main>
+  </div>
+  <aside data-trace-ignore>
+    <h1>trace-avatar playground</h1>
+    <textarea id="json" spellcheck="false" aria-label="Trace JSON"></textarea>
+    <div class="row">
+      <button id="play">Play</button>
+      <button id="check" class="ghost">Check</button>
+      <button id="reset" class="ghost">Reset sample</button>
+      <button id="record" class="ghost">● Record</button>
+      <button id="download" class="ghost">Download</button>
+    </div>
+    <div id="status" role="status" aria-live="polite"></div>
+  </aside>
+  <script>
+    const amount = document.getElementById('amount');
+    amount.addEventListener('input', () => { document.getElementById('total').textContent = '₦' + Number(amount.value || 0).toLocaleString(); });
+  </script>
+  <script src="../dist/trace.min.js"></script>
+  <script src="../dist/trace-record.min.js"></script>
+  <script>
+    const box = document.getElementById('json');
+    const status = document.getElementById('status');
+    const say = (text, err = false) => { status.textContent = text; status.className = err ? 'err' : ''; };
+    let current = null;
+    window.pg = { steps: [], current: () => current };
+
+    async function reset() {
+      const sample = await (await fetch('./sample.trace.json')).json();
+      box.value = JSON.stringify(sample, null, 2);
+      say('Sample loaded. Edit it, then press Play.');
+    }
+
+    function read() {
+      let raw;
+      try { raw = JSON.parse(box.value); } catch (e) { say('Not valid JSON: ' + e.message, true); return null; }
+      const v = TraceAvatar.validate(raw);
+      if (!v.ok) { say(v.errors.map((e) => `${e.path || '(root)'}: ${e.message}`).join('\n'), true); return null; }
+      return raw;
+    }
+
+    document.getElementById('check').addEventListener('click', () => { if (read()) say('Looks good.'); });
+    document.getElementById('reset').addEventListener('click', reset);
+    document.getElementById('play').addEventListener('click', () => {
+      const raw = read();
+      if (!raw) return;
+      current?.destroy();
+      window.pg.steps = [];
+      current = TraceAvatar.createTrace({ trace: raw, controls: true, autoplay: true });
+      current.on('step', (e) => { window.pg.steps.push(e.index); say(`Step ${e.index + 1} of ${current.trace.steps.length} (${e.step.type}${e.resolvedBy ? `, found by ${e.resolvedBy}` : ''})`); });
+      current.on('stalled', (e) => say(`Step ${e.index + 1}: element not found (${e.reason}).`, true));
+      current.on('end', () => say('Finished.'));
+    });
+    // Recording: use the app on the left, then Stop. Text typed into Customer is kept (data-trace-reveal);
+    // other fields are masked. The editor panel is ignored (data-trace-ignore).
+    let rec = null;
+    const recBtn = document.getElementById('record');
+    recBtn.addEventListener('click', () => {
+      if (!rec || rec.state !== 'recording') {
+        current?.destroy();
+        rec = TraceAvatarRecord.createRecorder({ title: 'Recorded in the playground', avatar: { name: 'You' } });
+        rec.start();
+        recBtn.textContent = '■ Stop';
+        say('Recording… use the app, then press Stop.');
+        return;
+      }
+      const trace = rec.stop();
+      recBtn.textContent = '● Record';
+      if (!trace) { say('Nothing was recorded.', true); return; }
+      box.value = JSON.stringify(trace, null, 2);
+      say(`Recorded ${trace.steps.length} steps. Edit captions ("say") if you like, then Play.`);
+    });
+    document.getElementById('download').addEventListener('click', () => {
+      const raw = read();
+      if (!raw) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(raw, null, 2)], { type: 'application/json' }));
+      a.download = (raw.meta?.title || 'trace').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.trace.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+    reset();
+  </script>
+</body>
+</html>

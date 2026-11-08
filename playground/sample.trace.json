@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "meta": { "title": "Create your first invoice", "viewport": { "w": 1280, "h": 800 }, "seed": 7 },
+  "avatar": { "name": "Sarah · Sales", "color": "#2456d8" },
+  "steps": [
+    { "type": "move", "target": { "sel": "[data-testid=new-invoice]" }, "say": "Hi! Let’s create an invoice together." },
+    { "type": "click", "target": { "sel": "[data-testid=new-invoice]" }, "say": "Start from New invoice." },
+    { "type": "type", "target": { "role": "textbox", "name": "Customer" }, "text": "Ada Stores", "say": "Pick the customer." },
+    { "type": "type", "target": { "role": "textbox", "name": "Amount" }, "text": "125000" },
+    { "type": "key", "keys": "Tab" },
+    { "type": "hover", "target": { "text": "Total" }, "hold": 1500, "say": "The total updates as you type." },
+    { "type": "click", "target": { "role": "button", "name": "Send invoice" }, "say": "Send it — done.", "pause": true },
+    { "type": "note", "say": "Your turn: change the amount, then press play." }
+  ]
+}

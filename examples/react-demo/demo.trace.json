@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "avatar": { "name": "Sarah · Sales" },
+  "steps": [
+    { "type": "click", "target": { "role": "button", "name": "New invoice" }, "say": "Start from New invoice." },
+    { "type": "type", "target": { "role": "textbox", "name": "Customer" }, "text": "Ada Stores" },
+    { "type": "click", "target": { "role": "button", "name": "Send invoice" }, "say": "Send it." }
+  ]
+}

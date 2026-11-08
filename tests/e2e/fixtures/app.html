@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>trace-avatar e2e fixture</title>
+  <style>
+    body { margin: 0; font: 16px/1.4 system-ui, sans-serif; }
+    header { display: flex; gap: 12px; padding: 16px; flex-wrap: wrap; align-items: center; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 16px; }
+    @media (max-width: 700px) { main { grid-template-columns: 1fr; } header { flex-direction: column; align-items: flex-start; } }
+    button, input { font: inherit; padding: 8px 12px; }
+    #panel { height: 200px; overflow: auto; border: 1px solid #ccc; }
+    #panel .row { height: 60px; border-bottom: 1px solid #eee; padding: 0 8px; }
+    #spacer { height: 1600px; }
+  </style>
+</head>
+<body>
+  <header>
+    <button data-testid="new-invoice">New invoice</button>
+    <a href="#pricing">Pricing</a>
+    <button id="settings" aria-label="Settings">⚙</button>
+  </header>
+  <main>
+    <section>
+      <label for="customer">Customer</label>
+      <input id="customer">
+      <button id="save">Save</button>
+      <p id="split">Send <b>reminder</b></p>
+    </section>
+    <section>
+      <div id="panel"></div>
+    </section>
+  </main>
+  <div id="spacer"></div>
+  <button id="footer-btn">Footer action</button>
+  <script>
+    const panel = document.getElementById('panel');
+    for (let i = 1; i <= 20; i += 1) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.id = `row-${i}`;
+      row.textContent = `Row ${i}`;
+      panel.appendChild(row);
+    }
+    window.clicks = [];
+    document.addEventListener('click', (e) => window.clicks.push(e.target.id || e.target.dataset.testid || e.target.tagName), true);
+    window.addLater = (ms) => setTimeout(() => {
+      const b = document.createElement('button');
+      b.id = 'late';
+      b.textContent = 'Late';
+      document.querySelector('header').appendChild(b);
+    }, ms);
+  </script>
+  <script src="/dist/trace.min.js"></script>
+  <script>
+    /** Start a trace and record what the overlay shows at every step. */
+    window.log = [];
+    window.start = (trace, opts = {}) => {
+      window.log = [];
+      window.events = [];
+      const t = TraceAvatar.createTrace({ trace, ...opts });
+      const cursor = () => {
+        const c = document.querySelector('[data-trace-avatar]').shadowRoot.querySelector('.cur');
+        const m = /translate3d\(([-\d.]+)px,\s*([-\d.]+)px/.exec(c.style.transform || '');
+        return m ? { x: +m[1], y: +m[2] } : null;
+      };
+      window.cursor = cursor;
+      t.on('step', (e) => {
+        const r = e.element ? e.element.getBoundingClientRect() : null;
+        window.log.push({ index: e.index, by: e.resolvedBy, cursor: cursor(), rect: r && { x: r.x, y: r.y, w: r.width, h: r.height } });
+      });
+      ['state', 'stalled', 'end'].forEach((k) => t.on(k, (e) => window.events.push({ k, e: e && (e.phase || e.reason || null) })));
+      window.t = t;
+      return true;
+    };
+  </script>
+</body>
+</html>

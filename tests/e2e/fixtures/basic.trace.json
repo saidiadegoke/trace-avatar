@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "meta": { "title": "Basic fixture", "viewport": { "w": 1280, "h": 720 } },
+  "avatar": { "name": "Ada · Support" },
+  "steps": [
+    { "type": "click", "target": { "sel": "[data-testid=new-invoice]" }, "say": "Start a new invoice." },
+    { "type": "type", "target": { "role": "textbox", "name": "Customer" }, "text": "Ada Stores", "say": "Pick the customer." },
+    { "type": "click", "target": { "text": "Save" } },
+    { "type": "hover", "target": { "text": "Send reminder" }, "hold": 300 }
+  ]
+}

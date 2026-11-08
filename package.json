@@ -1,0 +1,118 @@
+{
+  "name": "trace-avatar",
+  "version": "0.1.0",
+  "description": "Turn a list of steps into a smooth, human-looking ghost-cursor walkthrough on your real page. Element-anchored, zero dependencies.",
+  "main": "./dist/index.cjs",
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "npm run build && playwright test",
+    "size": "npm run build && size-limit",
+    "check": "npm run typecheck && npm test && npm run test:e2e && size-limit",
+    "serve": "node scripts/serve.mjs 4173"
+  },
+  "keywords": [
+    "cursor",
+    "ghost-cursor",
+    "product-tour",
+    "walkthrough",
+    "demo",
+    "onboarding",
+    "replay",
+    "avatar",
+    "overlay"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@size-limit/preset-small-lib": "^14.3.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitest/coverage-v8": "^3.2.7",
+    "ajv": "^8.20.0",
+    "fast-check": "^4.10.2",
+    "happy-dom": "^21.0.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "size-limit": "^14.3.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "sideEffects": [
+    "./dist/element.*",
+    "./dist/trace.min.js",
+    "./dist/trace-record.min.js"
+  ],
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "unpkg": "./dist/trace.min.js",
+  "jsdelivr": "./dist/trace.min.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
+    },
+    "./element": {
+      "types": "./dist/element.d.ts",
+      "import": "./dist/element.js",
+      "require": "./dist/element.cjs"
+    },
+    "./schema.json": "./schema/trace.v1.json",
+    "./package.json": "./package.json",
+    "./record": {
+      "types": "./dist/record.d.ts",
+      "import": "./dist/record.js",
+      "require": "./dist/record.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "schema",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "react": ">=17"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "size-limit": [
+    {
+      "name": "core (ESM)",
+      "path": "dist/index.js",
+      "limit": "12 KB"
+    },
+    {
+      "name": "react adapter + core",
+      "path": "dist/react.js",
+      "ignore": [
+        "react"
+      ],
+      "limit": "12.5 KB"
+    },
+    {
+      "name": "CDN build",
+      "path": "dist/trace.min.js",
+      "limit": "12 KB"
+    },
+    {
+      "name": "recorder",
+      "path": "dist/record.js",
+      "limit": "8 KB"
+    }
+  ]
+}
