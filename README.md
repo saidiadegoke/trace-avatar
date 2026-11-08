@@ -24,6 +24,8 @@ Docs, onboarding, demos and bug repros, element-anchored so it survives layout c
 </script>
 ```
 
+**[Try the playground →](https://saidiadegoke.github.io/trace-avatar/)** (edit a trace, play it, record your own).
+
 Try it locally: `npm i && npm run build && npm run serve`, then open
 `http://127.0.0.1:4173/examples/vanilla-html/` or the playground at `/playground/`.
 

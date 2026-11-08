@@ -8,10 +8,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "npm run build && playwright test",
+    "test:e2e": "npm run build && npm run site && playwright test",
     "size": "npm run build && size-limit",
     "check": "npm run typecheck && npm test && npm run test:e2e && size-limit",
-    "serve": "node scripts/serve.mjs 4173"
+    "serve": "node scripts/serve.mjs 4173",
+    "site": "node scripts/site.mjs"
   },
   "keywords": [
     "cursor",
@@ -114,5 +115,13 @@
       "path": "dist/record.js",
       "limit": "8 KB"
     }
-  ]
+  ],
+  "homepage": "https://saidiadegoke.github.io/trace-avatar/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/saidiadegoke/trace-avatar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/saidiadegoke/trace-avatar/issues"
+  }
 }
