@@ -5,11 +5,17 @@
   <button id="new">New invoice</button>
   <p><input id="customer" aria-label="Customer" data-trace-reveal> <input id="pw" type="password" aria-label="Password"></p>
   <div id="status">Draft</div>
+  <button id="check">Check password</button> <span id="echo"></span>
   <p><a id="next" href="/tests/e2e/fixtures/studio/page2.html">Next page</a></p>
   <script>
     document.getElementById('new').addEventListener('click', () => {
       document.getElementById('status').textContent = 'Saving…';
       setTimeout(() => { document.getElementById('status').textContent = 'Saved'; }, 300);
+    });
+    // An app that (badly) shows the password back: the recorder must never note it.
+    document.getElementById('check').addEventListener('click', () => {
+      document.getElementById('echo').textContent = 'Checked ' + document.getElementById('pw').value;
+      const ok = document.createElement('b'); ok.textContent = 'Password ok'; document.getElementById('echo').after(ok);
     });
   </script>
   <script src="/dist/trace-auto.min.js"></script>

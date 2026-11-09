@@ -21,12 +21,18 @@ import { isSecret } from '../core/mask';
 import { compactPages, entryOf, expandPages, guideId, moveStep, pagesOf, removeStep, stepLabel } from '../core/review';
 import type { EntryDraft } from '../core/review';
 import { STUDIO_PERSIST, STUDIO_REVIEW_KEY } from '../core/studio-keys';
+import type { Ai, Suggestion } from '../core/assist';
+import type { AssistUi, AssistUiHost } from './assist-ui';
 import { createEmitter } from '../shell/emitter';
 import { factsOf } from '../shell/recorder.dom';
 import type { PrepareResult, TraceController, TraceOptions } from '../index';
 
 export interface StudioPlayer { createTrace(o: TraceOptions): TraceController }
-export interface StudioLoaders { player(): Promise<StudioPlayer> }
+export interface StudioLoaders {
+  player(): Promise<StudioPlayer>;
+  /** The "Suggest" section, loaded when an author first opens it (only with `ai`). */
+  assist?(): Promise<{ createAssistUi(host: AssistUiHost): AssistUi }>;
+}
 
 export interface StudioOptions {
   doc?: Document;
@@ -47,6 +53,11 @@ export interface StudioOptions {
   onClose?: () => void;
   /** Passed to the recorder (tests: allowSynthetic, now, wall). */
   recorder?: Partial<RecorderOptions>;
+  /**
+   * AI suggestions in the review (captions, waits, a title), which the author accepts one by one. A function that
+   * calls your backend (never a model key in the page). See trace-avatar/assist.
+   */
+  ai?: Ai;
 }
 
 export type StudioState = 'idle' | 'recording' | 'paused' | 'review' | 'testing' | 'closed';
@@ -71,7 +82,11 @@ export interface Studio {
   destroy(): void;
 }
 
-interface Kept { trace: Trace; draft: EntryDraft; idEdited?: boolean; testing?: GuideMode }
+interface Kept {
+  trace: Trace; draft: EntryDraft; idEdited?: boolean; testing?: GuideMode;
+  /** What appeared after each step (parallel to trace.steps), for AI wait suggestions. Never saved. */
+  hints?: string[][];
+}
 
 const SEEN_KEY = 'trace-avatar:studio:seen';
 const TEST_KEY = 'studio:test';
@@ -311,13 +326,16 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
   function stop() {
     if (!rec || (state !== 'recording' && state !== 'paused')) return;
     const trace = rec.stop();
+    const seen = rec.hints;
     rec.destroy();
     rec = null;
     hideBar();
     if (!trace) { kept = null; review(null); return; }
     const title = trace.meta?.title ?? '';
     const steps = expandPages(trace.steps);
-    kept = { trace: { ...trace, steps }, draft: { id: guideId(title), title, modes: performOk ? ['overlay', 'perform'] : ['overlay'], pages: pagesOf(steps).slice(0, 1) } };
+    const hints = steps.map(() => [] as string[]);
+    for (const x of seen) if (hints[x.after]) hints[x.after] = x.texts;
+    kept = { trace: { ...trace, steps }, draft: { id: guideId(title), title, modes: performOk ? ['overlay', 'perform'] : ['overlay'], pages: pagesOf(steps).slice(0, 1) }, hints };
     ss.set(kept);
     review(kept);
   }
@@ -352,6 +370,45 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
     return p.length === 0;
   };
   const changed = (rerender = false) => { if (kept) ss.set(kept); if (rerender) review(kept); else check(); };
+
+  const swapHints = (k: Kept, a: number, b: number) => {
+    const x = k.hints;
+    if (x && x[a] && x[b]) [x[a], x[b]] = [x[b], x[a]];
+  };
+
+  // ── AI suggestions (only with opts.ai; the section loads on first use) ─────────
+  let assistUi: AssistUi | null = null;
+  const acceptSuggestion = (k: Kept, sg: Suggestion) => {
+    const steps = k.trace.steps;
+    if (sg.kind === 'say' && steps[sg.index]) steps[sg.index].say = sg.value;
+    else if (sg.kind === 'title') { k.draft.title = sg.value; if (!k.idEdited) k.draft.id = guideId(sg.value); }
+    else if (sg.kind === 'wait') {
+      const page = steps[sg.index]?.page;
+      steps.splice(sg.index + 1, 0, { type: 'wait', until: { text: sg.value }, timeout: 15_000, ...(page ? { page } : {}) });
+      k.hints?.splice(sg.index + 1, 0, []);
+    }
+    changed(true);
+  };
+  function assistBox(): HTMLElement | string {
+    const ai = opts.ai;
+    if (!ai) return '';
+    const box = h('div', { className: 'ai' });
+    // Bound to the kept work as it is when called (the review re-renders with the same studio).
+    const host: AssistUiHost = {
+      h, ai,
+      trace: () => current()!,
+      hints: () => (kept?.hints ?? []).flatMap((texts, after) => (texts.length ? [{ after, texts }] : [])),
+      accept: (sg) => { if (kept) acceptSuggestion(kept, sg); },
+    };
+    if (assistUi) { assistUi.render(box); return box; }
+    if (!loaders.assist) return '';
+    const open = h('button', { onclick: async () => {
+      open.textContent = 'Loading…';
+      try { assistUi ??= (await loaders.assist!()).createAssistUi(host); assistUi.render(box); } catch (e) { open.textContent = `Could not load the AI suggestions: ${(e as Error).message}`; }
+    } }, '✨ Suggest captions, waits, a title');
+    box.append(open);
+    return box;
+  }
 
   function review(k: Kept | null) {
     set('review');
@@ -401,9 +458,9 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
           changed();
         } }),
         h('div', { className: 'row' },
-          h('button', { 'aria-label': `Move step ${n} up`, disabled: i === 0, onclick: () => { k.trace.steps = moveStep(steps, i, -1); changed(true); } }, '↑'),
-          h('button', { 'aria-label': `Move step ${n} down`, disabled: i === steps.length - 1, onclick: () => { k.trace.steps = moveStep(steps, i, 1); changed(true); } }, '↓'),
-          h('button', { 'aria-label': `Delete step ${n}`, onclick: () => { k.trace.steps = removeStep(steps, i); changed(true); } }, '✕'),
+          h('button', { 'aria-label': `Move step ${n} up`, disabled: i === 0, onclick: () => { k.trace.steps = moveStep(steps, i, -1); swapHints(k, i, i - 1); changed(true); } }, '↑'),
+          h('button', { 'aria-label': `Move step ${n} down`, disabled: i === steps.length - 1, onclick: () => { k.trace.steps = moveStep(steps, i, 1); swapHints(k, i, i + 1); changed(true); } }, '↓'),
+          h('button', { 'aria-label': `Delete step ${n}`, onclick: () => { k.trace.steps = removeStep(steps, i); k.hints?.splice(i, 1); changed(true); } }, '✕'),
           flag('checkpoint', 'Checkpoint'), flag('pause', 'Pause here')),
       ));
     });
@@ -425,10 +482,11 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
         const p = parse(raw);
         if (!p.ok) { note(`Not a valid trace: ${p.errors.map((x) => `${x.path || 'trace'} ${x.message}`).join('; ')}`); return; }
         k.trace = { ...(raw as Trace), steps: expandPages((raw as Trace).steps) };
+        delete k.hints;
         changed(true);
       } }, 'Apply JSON')));
     panel.append(
-      h('h2', { style: 'font-size:14px' }, `Steps (${steps.length})`), list, errEl,
+      h('h2', { style: 'font-size:14px' }, `Steps (${steps.length})`), list, assistBox(), errEl,
       h('div', { className: 'row' }, h('span', {}, 'Try it:'), playShow, playDo),
       h('div', { className: 'row' }, saveBtn, dl, cp),
       statusEl, adv,

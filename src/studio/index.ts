@@ -21,6 +21,7 @@ export type { EntryDraft } from '../core/review';
 
 export const defaultStudioLoaders: StudioLoaders = {
   player: () => import('../perform/index'),
+  assist: () => import('./assist-ui'),
 };
 
 export function createStudio(opts: StudioOptions = {}, loaders: Partial<StudioLoaders> = {}): Studio {

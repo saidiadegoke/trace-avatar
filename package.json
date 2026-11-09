@@ -89,6 +89,11 @@
       "import": "./dist/studio.js",
       "require": "./dist/studio.cjs"
     },
+    "./assist": {
+      "types": "./dist/assist.d.ts",
+      "import": "./dist/assist.js",
+      "require": "./dist/assist.cjs"
+    },
     "./export": {
       "types": "./dist/export.d.ts",
       "import": "./dist/export.js",
@@ -156,7 +161,7 @@
     {
       "name": "recorder",
       "path": "dist/record.js",
-      "limit": "9 KB"
+      "limit": "9.5 KB"
     },
     {
       "name": "loader (CDN bootstrap)",
@@ -178,14 +183,15 @@
       "path": "dist/studio.js",
       "import": "{ createStudio }",
       "ignore": [
-        "./perform.js"
+        "./perform.js",
+        "./studio-assist.js"
       ],
-      "limit": "14.5 KB"
+      "limit": "15 KB"
     },
     {
       "name": "studio CDN (trace-studio.min.js)",
       "path": "dist/trace-studio.min.js",
-      "limit": "14.5 KB"
+      "limit": "15.5 KB"
     },
     {
       "name": "export (npm, before a GIF loads its encoder)",
@@ -200,6 +206,17 @@
       "name": "export CDN (trace-export.min.js)",
       "path": "dist/trace-export.min.js",
       "limit": "4 KB"
+    },
+    {
+      "name": "assist (AI suggestions; no model code)",
+      "path": "dist/assist.js",
+      "import": "{ suggest, apply, openAiCompatible }",
+      "limit": "4.5 KB"
+    },
+    {
+      "name": "studio's Suggest section (trace-studio-assist.min.js, loaded on first use)",
+      "path": "dist/trace-studio-assist.min.js",
+      "limit": "5 KB"
     },
     {
       "name": "GIF encoder chunk (trace-gif.min.js, loaded for a GIF)",

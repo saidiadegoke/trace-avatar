@@ -9,7 +9,7 @@
  * demo author marks fields [data-trace-reveal] to keep their text.
  */
 
-import { build } from '../core/build';
+import { build, hintsOf } from '../core/build';
 import type { Draft, ScrollMode } from '../core/build';
 import { parse } from '../core/format';
 import type { Avatar, Trace, Until } from '../core/format';
@@ -70,6 +70,11 @@ export interface Recorder {
   resume(): void;
   /** Stop and return the trace (null when nothing was recorded). */
   stop(): Trace | null;
+  /**
+   * After stop(): the short texts that appeared on the page just after each step (step index from 0), for AI
+   * wait suggestions. Never part of the trace. Fields, masked and blurred areas are skipped.
+   */
+  readonly hints: Array<{ after: number; texts: string[] }>;
   readonly state: RecorderState;
   /** Actions captured so far (before merging). */
   readonly count: number;
@@ -134,6 +139,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
   let state: RecorderState = 'idle';
   let clock: RecClock = recClock(0);
   let drafts: Draft[] = [];
+  let lastHints: Array<{ after: number; texts: string[] }> = [];
   let lastSample = -Infinity;
   let startUrl: string | undefined;
   let touches = 0;
@@ -160,11 +166,52 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
     if (!el || typeof (el as Element).closest !== 'function') return false;
     return !!el.closest(ignoreSel) || e.composedPath().some((n) => n instanceof Element && n.hasAttribute('data-trace-avatar'));
   };
+  // ── What appears after a click or a key (Saved, Sent to Ada…), for wait suggestions ──────────────
+  const SEEN_MS = 3000;
+  let watching: { d: Draft; until: number; own: string } | null = null;
+  let mo: MutationObserver | null = null;
+  const skipSel = `${ignoreSel}, input, textarea, select, [contenteditable], [data-trace-blur], [data-trace-mask], script, style, noscript, template`;
+  const maskedValues = (): string[] => Array.from(doc.querySelectorAll('input, textarea'))
+    .filter((el) => shouldMask(factsFor(el), opts.maskByDefault ?? true))
+    .map((el) => (el as HTMLInputElement).value)
+    .filter((v) => v && v.length >= 3);
+  const unwatch = () => { mo?.disconnect(); mo = null; watching = null; };
+  const noticed = (records: MutationRecord[]) => {
+    const w = watching;
+    if (!w || now() > w.until) { unwatch(); return; }
+    const seen = (w.d.seen ??= []);
+    let secrets: string[] | null = null;
+    for (const r of records) {
+      const nodes: Node[] = r.type === 'childList' ? Array.from(r.addedNodes) : [r.target];
+      for (const n of nodes) {
+        if (seen.length >= 5) break;
+        const el = n.nodeType === 1 ? (n as Element) : n.parentElement;
+        if (!el || el.closest(skipSel) || !el.getClientRects().length) continue;
+        const text = (n.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (text.length < 2 || text.length > 60 || text === w.own || seen.includes(text)) continue;
+        secrets ??= maskedValues();
+        if (secrets.some((v) => text.includes(v))) continue;
+        seen.push(text);
+        scheduleSave();
+      }
+    }
+  };
+  const watch = (d: Draft) => {
+    if (typeof win.MutationObserver !== 'function' || !doc.body) return;
+    unwatch();
+    watching = { d, until: now() + SEEN_MS, own: (d.target?.name ?? d.target?.text ?? '').trim() };
+    mo = new win.MutationObserver(noticed);
+    mo.observe(doc.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class', 'style', 'aria-hidden'] });
+    const mine = watching;
+    setTimeout(() => { if (watching === mine) { if (mo) noticed(mo.takeRecords()); unwatch(); } }, SEEN_MS);
+  };
+
   const add = (d: Draft) => {
     const path = win.location?.pathname;
     if (path) d.page = pagePattern(path);
     drafts.push(d);
     emitter.emit('draft', d);
+    if (d.kind === 'click' || d.kind === 'dblclick' || d.kind === 'key') watch(d);
     // A click or a key can leave the page at once (a link, a form): keep it now. Typing and scrolls can wait.
     if (d.kind === 'type' || d.kind === 'scroll') scheduleSave(); else save();
   };
@@ -286,7 +333,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
       attach();
     } else if (action === 'pause') clock = recPause(clock, at);
     else if (action === 'resume') clock = recResume(clock, at);
-    else if (action === 'stop') { clock = recPause(clock, at); detach(); }
+    else if (action === 'stop') { clock = recPause(clock, at); detach(); unwatch(); }
     state = to;
     if (to === 'stopped') forget(); else save();
     emitter.emit('state', { state });
@@ -342,11 +389,13 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
         },
       });
       if (!trace) return null;
+      lastHints = hintsOf({ drafts, scrolls: opts.scrolls });
       const checked = parse(trace);
       if (!checked.ok) throw new Error(`trace-avatar recorder built an invalid trace: ${JSON.stringify(checked.errors)}`);
       return trace;
     },
     get state() { return state; },
+    get hints() { return lastHints; },
     get count() { return drafts.length; },
     get restored() { return restored; },
     get elapsed() { return state === 'idle' ? 0 : Math.round(t()); },
@@ -367,6 +416,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
     on: (ev, fn) => emitter.on(ev, fn),
     destroy(o) {
       detach();
+      unwatch();
       if (o?.keep) save(); else forget();
       if (storeKey) win.removeEventListener('pagehide', onHide);
       emitter.clear();

@@ -13,6 +13,19 @@
   palette comes from the first second plus the avatar's colour and greys. Video uses MediaRecorder (WebM, or MP4).
   Errors are `ExportError` with a `reason`. The playground has a "Save as video" button.
 
+- **AI suggestions:** `trace-avatar/assist` (CDN `trace-assist.min.js`): `suggest('captions' | 'waits' | 'title',
+  trace, { ai, hints, tone, sendTyped })`, `describe` (alt text, chapter names), `preview` (the exact payload),
+  `apply`, and providers `openAiCompatible({ baseUrl, key, model })` and `gateway({ provider, model, url, key })`.
+  Suggestions are checked (length caps, waits only on texts the page showed, a valid trace) before anyone sees them.
+- The studio: `createStudio({ ai })` / `mount({ record: { ai } })` adds "✨ Suggest captions, waits, a title" to the
+  review, with Accept / Reject per suggestion, Accept all, and "What's sent". The section is its own chunk
+  (`studio-assist`, `trace-studio-assist.min.js`), loaded when opened.
+- The recorder notes up to 5 short texts that appear in the 3 s after a click or key (`recorder.hints` after
+  `stop()`), skipping fields, masked and blurred areas and anything containing a masked field's value. They are never
+  saved in a trace.
+- Budgets raised openly: recorder 9 → 9.5 KB (the text watcher), studio 14.5 → 15 KB npm / 15.5 KB CDN (the Suggest
+  button, hints and accepting).
+
 ## 0.1.6
 
 The studio: record guides inside the app.

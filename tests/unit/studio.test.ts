@@ -327,6 +327,83 @@ describe('studio: review', () => {
   });
 });
 
+describe('studio: AI suggestions', () => {
+  beforeEach(() => {
+    html('<button id="new">New invoice</button><div id="status"></div><input id="customer" aria-label="Customer" data-trace-reveal>');
+    document.querySelector('#new')!.addEventListener('click', () => { document.querySelector('#status')!.textContent = 'Invoice saved'; });
+    // happy-dom lays nothing out: count every element as visible for the recorder's "what appeared".
+    vi.spyOn(Element.prototype, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList);
+  });
+  const answers: Record<string, unknown> = {
+    captions: { steps: [{ n: 1, say: 'Start a new invoice' }, { n: 2, say: 'Who is it for?' }] },
+    waits: { waits: [{ after: 1, text: 'Invoice saved', why: 'saving takes a moment' }] },
+    title: { title: 'Make an invoice' },
+  };
+
+  it('suggests captions, a wait (from what appeared) and a title; each is accepted or rejected; nothing typed is sent', async () => {
+    const ai = vi.fn(async (task: string) => answers[task]);
+    const s = createStudio({ recorder: { allowSynthetic: true }, ai }, { player: p.load, assist: () => import('../../src/studio/assist-ui') });
+    open.push(s);
+    s.start();
+    click(document.querySelector('#new')!);
+    await tick();
+    const f = document.querySelector('#customer') as HTMLInputElement;
+    f.value = 'Ada';
+    f.dispatchEvent(new Event('input', { bubbles: true }));
+    s.stop();
+    click(btn(s, '✨ Suggest captions, waits, a title'));
+    await vi.waitFor(() => btn(s, 'Captions'));
+    // Captions: accept one, reject the other.
+    click(btn(s, 'Captions'));
+    await vi.waitFor(() => expect(sr(s).querySelectorAll('ol[aria-label=Suggestions] li')).toHaveLength(2));
+    click(btn(s, 'Accept: Step 1, caption'));
+    expect(input(s, 'Caption for step 1').value).toBe('Start a new invoice');
+    click(btn(s, 'Reject: Step 2, caption'));
+    expect(sr(s).querySelector('ol[aria-label=Suggestions]')).toBeNull();
+    expect(s.trace!.steps[1].say).toBeUndefined();
+    // Waits: the recorder saw "Invoice saved" appear after step 1.
+    click(btn(s, 'Waits'));
+    await vi.waitFor(() => btn(s, 'Accept: After step 1, wait until the page shows'));
+    click(btn(s, 'Accept: After step 1, wait until the page shows'));
+    expect(s.trace!.steps.map((x) => x.type)).toEqual(['click', 'wait', 'type']);
+    expect(s.trace!.steps[1]).toMatchObject({ type: 'wait', until: { text: 'Invoice saved' } });
+    // Title: also the id (not edited by hand).
+    click(btn(s, 'A title'));
+    await vi.waitFor(() => btn(s, 'Accept: Title'));
+    click(btn(s, 'Accept: Title'));
+    expect(labelled(s, 'Title').value).toBe('Make an invoice');
+    expect(s.entry!.id).toBe('make-an-invoice');
+    expect(ai.mock.calls.map((c) => c[0])).toEqual(['captions', 'waits', 'title']);
+    // Nothing typed was sent; what's sent is shown.
+    // (The instructions' own example says "Sent to Ada"; the data must not hold the typed name.)
+    const typed = 'Ada';
+    expect(JSON.stringify(ai.mock.calls.map((c) => (c as unknown[])[1]))).not.toContain(typed);
+    const det = sr(s).querySelector('.ai details') as HTMLDetailsElement;
+    det.open = true;
+    det.dispatchEvent(new Event('toggle'));
+    expect(det.querySelector('pre')!.textContent).toContain('Invoice saved');
+    expect(det.querySelector('pre')!.textContent).not.toContain('Ada');
+  });
+
+  it('an AI that fails says so; without ai there is no Suggest; without anything seen, Waits is off', async () => {
+    const ai = vi.fn(async () => { throw new Error('quota exceeded'); });
+    const s = createStudio({ recorder: { allowSynthetic: true }, ai }, { player: p.load, assist: () => import('../../src/studio/assist-ui') });
+    open.push(s);
+    s.start();
+    (document.querySelector('#customer') as HTMLInputElement).value = 'x';
+    document.querySelector('#customer')!.dispatchEvent(new Event('input', { bubbles: true }));
+    s.stop();
+    click(btn(s, '✨ Suggest captions, waits, a title'));
+    await vi.waitFor(() => btn(s, 'Waits'));
+    expect(btn(s, 'Waits').disabled).toBe(true);
+    click(btn(s, 'Captions'));
+    await vi.waitFor(() => expect(sr(s).querySelector('.ai')!.textContent).toContain('The AI could not answer: quota exceeded'));
+    const plain = make();
+    recordSome(plain);
+    expect(Array.from(sr(plain).querySelectorAll('button')).some((b) => b.textContent!.includes('Suggest'))).toBe(false);
+  });
+});
+
 describe('studio: test play', () => {
   const page = '<button id="new">New invoice</button><input id="customer" aria-label="Customer" data-trace-reveal>';
 

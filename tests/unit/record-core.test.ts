@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { GAPS, MERGE, build, coalesce, gapMap, pruneScrolls } from '../../src/core/build';
+import { GAPS, MERGE, build, coalesce, gapMap, hintsOf, pruneScrolls } from '../../src/core/build';
 import type { Draft } from '../../src/core/build';
 import { parse } from '../../src/core/format';
 import { isSecret, maskText, shouldMask } from '../../src/core/mask';
@@ -273,5 +273,21 @@ describe('build: pages', () => {
     expect(tr.steps.map((s) => s.page)).toEqual(['/app', undefined, '/app/tasks/new', undefined, '/app']);
     const r = parse(tr);
     expect(r.ok && r.trace.steps.map((s) => s.page)).toEqual(['/app', '/app', '/app/tasks/new', '/app/tasks/new', '/app']);
+  });
+});
+
+describe('hintsOf', () => {
+  it('maps what appeared after a draft onto the step it became (merges and dropped drafts accounted for)', () => {
+    const drafts: Draft[] = [
+      { kind: 'click', t: 0, key: 'a', target: { sel: '#a' }, seen: ['Opened'] },
+      { kind: 'type', t: 100, key: 'f', target: { sel: '#f' }, text: 'A' },
+      { kind: 'type', t: 200, key: 'f', target: { sel: '#f' }, text: 'Ab' },
+      { kind: 'click', t: 300, key: 'x' }, // no target: dropped
+      { kind: 'click', t: 400, key: 'b', target: { sel: '#b' }, seen: ['Saved', 'Sent'] },
+    ];
+    expect(hintsOf({ drafts })).toEqual([{ after: 0, texts: ['Opened'] }, { after: 2, texts: ['Saved', 'Sent'] }]);
+    const t = build({ drafts, meta: {} })!;
+    expect(t.steps).toHaveLength(3);
+    expect(JSON.stringify(t)).not.toContain('Saved'); // never in the trace
   });
 });

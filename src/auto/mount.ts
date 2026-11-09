@@ -42,6 +42,8 @@ export interface RecordOptions {
   maskByDefault?: boolean;
   /** The shortcut that starts recording. Default 'Alt+Shift+R'; false turns it off. */
   shortcut?: string | false;
+  /** AI suggestions in the studio's review: a function calling your backend (see trace-avatar/assist). */
+  ai?: StudioOptions['ai'];
 }
 
 export interface MountOptions {
@@ -351,6 +353,7 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
           ...(rec!.save ? { save: rec!.save } : {}),
           ...(rec!.requires ? { requires: rec!.requires } : {}),
           ...(rec!.maskByDefault !== undefined ? { maskByDefault: rec!.maskByDefault } : {}),
+          ...(rec!.ai ? { ai: rec!.ai } : {}),
           ...(opts.avatar ? { avatar: opts.avatar } : {}),
           ...(opts.navigate ? { navigate: opts.navigate } : {}),
           ...(opts.prepare ? { prepare: opts.prepare } : {}),

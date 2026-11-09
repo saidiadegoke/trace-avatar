@@ -32,6 +32,8 @@ export interface Draft {
   pause?: boolean;
   /** `wait`: what to wait for. */
   until?: Until;
+  /** Texts that appeared on the page just after this action (for AI wait suggestions; never saved in a trace). */
+  seen?: string[];
 }
 
 export const MERGE = { dblclickMs: 500, typeGapMs: 2000, scrollGapMs: 300 } as const;
@@ -173,12 +175,20 @@ export interface BuildInput {
   scrolls?: ScrollMode;
 }
 
+/** The drafts that become steps, one per step, in order. */
+const keptOf = (input: Pick<BuildInput, 'drafts' | 'scrolls'>): Draft[] => pruneScrolls(
+  coalesce(input.drafts).filter((d) => (d.kind === 'key' ? !!d.keys : d.kind === 'scroll' ? true : d.kind === 'note' ? !!d.say : d.kind === 'wait' ? !!d.until : !!d.target)),
+  input.scrolls,
+);
+
+/** What appeared after each step of the built trace (step indexes as build() numbers them). */
+export function hintsOf(input: Pick<BuildInput, 'drafts' | 'scrolls'>): Array<{ after: number; texts: string[] }> {
+  return keptOf(input).flatMap((d, i) => (d.seen?.length ? [{ after: i, texts: d.seen.slice() }] : []));
+}
+
 /** Build a trace, or null when nothing worth replaying was recorded. */
 export function build(input: BuildInput): Trace | null {
-  const kept = pruneScrolls(
-    coalesce(input.drafts).filter((d) => (d.kind === 'key' ? !!d.keys : d.kind === 'scroll' ? true : d.kind === 'note' ? !!d.say : d.kind === 'wait' ? !!d.until : !!d.target)),
-    input.scrolls,
-  );
+  const kept = keptOf(input);
   if (!kept.length) return null;
   const wantPath = input.keepPath !== false && !!input.path && input.path.length >= 6;
   // The path's end is an anchor only past the last step (a tail to squeeze), never between steps.

@@ -2,7 +2,7 @@ import { defineConfig } from 'tsup';
 
 export default defineConfig([
   {
-    entry: { index: 'src/index.ts', react: 'src/react/index.tsx', element: 'src/element/index.ts', record: 'src/record/index.ts', perform: 'src/perform/index.ts', auto: 'src/auto/index.ts', studio: 'src/studio/index.ts', export: 'src/export/index.ts', 'export-gif': 'src/export/gif.ts' },
+    entry: { index: 'src/index.ts', react: 'src/react/index.tsx', element: 'src/element/index.ts', record: 'src/record/index.ts', perform: 'src/perform/index.ts', auto: 'src/auto/index.ts', studio: 'src/studio/index.ts', export: 'src/export/index.ts', 'export-gif': 'src/export/gif.ts', assist: 'src/assist/index.ts', 'studio-assist': 'src/studio/assist-ui.ts' },
     format: ['esm', 'cjs'],
     dts: true,
     sourcemap: true,
@@ -60,6 +60,24 @@ export default defineConfig([
     entry: { 'trace-export': 'src/export/cdn.ts' },
     format: ['iife'],
     globalName: 'TraceAvatarExport',
+    minify: true,
+    sourcemap: true,
+    target: 'es2021',
+    outExtension: () => ({ js: '.min.js' }),
+  },
+  {
+    entry: { 'trace-assist': 'src/assist/index.ts' },
+    format: ['iife'],
+    globalName: 'TraceAvatarAssist',
+    minify: true,
+    sourcemap: true,
+    target: 'es2021',
+    outExtension: () => ({ js: '.min.js' }),
+  },
+  {
+    entry: { 'trace-studio-assist': 'src/studio/assist-ui.ts' },
+    format: ['iife'],
+    globalName: 'TraceAvatarStudioAssist',
     minify: true,
     sourcemap: true,
     target: 'es2021',

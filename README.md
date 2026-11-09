@@ -415,6 +415,37 @@ const trace = rec.stop();   // a valid trace.json, or null if nothing happened
 - The recorder's own API for tools: `caption(say)`, `waitFor(el, { text } | { gone: true })`, `mark(el, 'mask' |
   'reveal' | null)`, `elapsed`, `destroy({ keep: true })` (stop listening, keep the recording for the next page).
 
+## AI suggestions (optional)
+
+The studio can ask an AI for **captions**, **waits** (for the texts the app showed after a step, such as "Saved")
+and **a title**. Each suggestion shows as before → after with Accept and Reject; nothing changes until the author
+accepts. With no `ai`, nothing calls a model.
+
+```js
+mount({ guides: '/guides/index.json', record: { allowed, save, ai: (task, input, schema, o) =>
+  fetch('/api/guide-ai', { method: 'POST', body: JSON.stringify({ task, input, schema, instructions: o.instructions }) }).then((r) => r.json()) } });
+```
+
+`ai` is any function returning JSON for the schema. In a page, make it call **your backend**; never put a model key in
+a page. On the server (or anywhere a key is safe), `trace-avatar/assist` has two ready-made providers:
+
+```js
+import { suggest, apply, openAiCompatible, gateway } from 'trace-avatar/assist';
+const ai = openAiCompatible({ baseUrl: 'https://api.openai.com/v1', key: process.env.OPENAI_API_KEY, model: 'gpt-4o-mini' });
+// any OpenAI-compatible server works: Ollama (http://localhost:11434/v1), OpenRouter, vLLM…
+// or an AI gateway that forwards provider calls: gateway({ provider: 'deepseek', model: 'deepseek-chat', url, key })
+const { suggestions } = await suggest('captions', trace, { ai, tone: 'terse' });
+const next = apply(trace, suggestions);   // or only the ones a person accepted
+```
+
+**What is sent:** step types, the role and accessible name of each step's element, page paths, existing captions
+and timing; for waits, the short texts that appeared after each step. **Never:** what was typed (masked or not, unless
+you pass `sendTyped: true`, and never a masked field's), selectors, or text inside fields, masked areas and
+`[data-trace-blur]`. `preview(task, trace)` returns the exact payload; the studio shows it under "What's sent".
+Answers are checked: a caption is at most 140 characters, a wait only uses a text the page really showed, and the
+trace must stay valid, or the suggestion is left out. trace-avatar-render adds a visual check of rendered frames
+(`--qa`) and alt text (`--alt`).
+
 ## Theming
 
 ```css
@@ -477,7 +508,7 @@ page load can't be saved this way (the page doing the recording goes away); use 
 
 About 14 KB min+brotli for the player (locators, overlay, controls, validation, pages, waits); perform mode is a
 separate 15 KB entry (player + hands), the recorder a separate 9 KB one, the studio about 14 KB (loaded only for authors), the guides loader about
-6 KB until its first play, and Save as video 2.5 KB (plus 5 KB for the GIF encoder, loaded only for a GIF). `size-limit` guards each in CI.
+6 KB until its first play, Save as video 2.5 KB (plus 5 KB for the GIF encoder, loaded only for a GIF), and AI suggestions 4.4 KB (the studio's Suggest section, 4.8 KB, loads only when opened). `size-limit` guards each in CI.
 
 ## Contributing
 
