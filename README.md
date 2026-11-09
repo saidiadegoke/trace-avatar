@@ -430,13 +430,19 @@ mount({ guides: '/guides/index.json', record: { allowed, save, ai: (task, input,
 a page. On the server (or anywhere a key is safe), `trace-avatar/assist` has two ready-made providers:
 
 ```js
-import { suggest, apply, openAiCompatible, gateway } from 'trace-avatar/assist';
-const ai = openAiCompatible({ baseUrl: 'https://api.openai.com/v1', key: process.env.OPENAI_API_KEY, model: 'gpt-4o-mini' });
-// any OpenAI-compatible server works: Ollama (http://localhost:11434/v1), OpenRouter, vLLM…
-// or an AI gateway that forwards provider calls: gateway({ provider: 'deepseek', model: 'deepseek-chat', url, key })
+import { suggest, apply, openAiCompatible, gemini, gateway } from 'trace-avatar/assist';
+const ai = openAiCompatible({ baseUrl: 'https://api.deepseek.com', key: process.env.DEEPSEEK_API_KEY, model: 'deepseek-chat', visionModel: 'deepseek-flash' });
+// any OpenAI-compatible server works: OpenAI, Ollama (http://localhost:11434/v1), OpenRouter, vLLM…
+// Gemini's own API: gemini({ key, model: 'gemini-2.5-flash' })
+// an AI gateway that forwards each provider's own calls: gateway({ url, key }) tries DeepSeek (usually the
+// cheapest; deepseek-flash for images), then Gemini, then OpenAI. Or gateway({ provider: 'gemini', model }).
 const { suggestions } = await suggest('captions', trace, { ai, tone: 'terse' });
 const next = apply(trace, suggestions);   // or only the ones a person accepted
 ```
+
+Failed calls are retried twice (a 429, a 5xx or no answer; following `Retry-After`). A gateway's own refusal, such
+as a model not on the key's list, is not retried; the `AssistError` says which models are allowed and carries the
+gateway's request id. `firstOf(a, b, …)` tries providers in turn for your own chains.
 
 **What is sent:** step types, the role and accessible name of each step's element, page paths, existing captions
 and timing; for waits, the short texts that appeared after each step. **Never:** what was typed (masked or not, unless
@@ -508,7 +514,7 @@ page load can't be saved this way (the page doing the recording goes away); use 
 
 About 14 KB min+brotli for the player (locators, overlay, controls, validation, pages, waits); perform mode is a
 separate 15 KB entry (player + hands), the recorder a separate 9 KB one, the studio about 14 KB (loaded only for authors), the guides loader about
-6 KB until its first play, Save as video 2.5 KB (plus 5 KB for the GIF encoder, loaded only for a GIF), and AI suggestions 4.4 KB (the studio's Suggest section, 4.8 KB, loads only when opened). `size-limit` guards each in CI.
+6 KB until its first play, Save as video 2.5 KB (plus 5 KB for the GIF encoder, loaded only for a GIF), and AI suggestions 3.8 KB in a page (5.5 KB with the server-side providers; the studio's Suggest section, 4.8 KB, loads only when opened). `size-limit` guards each in CI.
 
 ## Contributing
 

@@ -15,7 +15,11 @@
 
 - **AI suggestions:** `trace-avatar/assist` (CDN `trace-assist.min.js`): `suggest('captions' | 'waits' | 'title',
   trace, { ai, hints, tone, sendTyped })`, `describe` (alt text, chapter names), `preview` (the exact payload),
-  `apply`, and providers `openAiCompatible({ baseUrl, key, model })` and `gateway({ provider, model, url, key })`.
+  `apply`, and providers `openAiCompatible({ baseUrl, key, model, visionModel })`, `gemini({ key, model })` (Gemini's
+  own generateContent: images inline, JSON mode, room for thinking) and `gateway({ url, key })`. With no provider
+  named, `gateway()` tries DeepSeek (deepseek-chat; deepseek-flash for images), then Gemini, then OpenAI.
+  `firstOf()` chains any providers. Calls are retried on 429/5xx/no answer (with `Retry-After`), never on a gateway's
+  own refusal; `AssistError.info` has the request id and the allowed models.
   Suggestions are checked (length caps, waits only on texts the page showed, a valid trace) before anyone sees them.
 - The studio: `createStudio({ ai })` / `mount({ record: { ai } })` adds "✨ Suggest captions, waits, a title" to the
   review, with Accept / Reject per suggestion, Accept all, and "What's sent". The section is its own chunk
@@ -23,6 +27,7 @@
 - The recorder notes up to 5 short texts that appear in the 3 s after a click or key (`recorder.hints` after
   `stop()`), skipping fields, masked and blurred areas and anything containing a masked field's value. They are never
   saved in a trace.
+- assist is measured twice: in a page (`suggest`, `apply`: 4 KB budget) and with the server-side providers (6 KB).
 - Budgets raised openly: recorder 9 → 9.5 KB (the text watcher), studio 14.5 → 15 KB npm / 15.5 KB CDN (the Suggest
   button, hints and accepting).
 

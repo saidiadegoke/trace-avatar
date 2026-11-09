@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import fc from 'fast-check';
-import { apply, describe as describeGuide, gateway, openAiCompatible, parseJsonReply, preview, suggest, toSuggestions, AssistError } from '../../src/assist/index';
+import { apply, describe as describeGuide, firstOf, gateway, gemini, openAiCompatible, retryAfterMs, parseJsonReply, preview, suggest, toSuggestions, AssistError } from '../../src/assist/index';
 import type { Ai } from '../../src/assist/index';
 import type { Trace } from '../../src/core/format';
 import { validate } from '../../src/core/format';
@@ -142,7 +142,7 @@ describe('providers', () => {
   });
 
   it('errors: a failed call (with its status), a reply without a message, a reply that is not JSON', async () => {
-    const go = (f: unknown) => openAiCompatible({ baseUrl: 'http://x', model: 'm', fetch: f as typeof fetch })('title', {}, {}, { instructions: '' });
+    const go = (f: unknown) => openAiCompatible({ baseUrl: 'http://x', model: 'm', retries: 0, fetch: f as typeof fetch })('title', {}, {}, { instructions: '' });
     const e = await go(reply('', 429)).catch((x: unknown) => x) as AssistError;
     expect(e).toBeInstanceOf(AssistError);
     expect(e).toMatchObject({ status: 429 });
@@ -153,7 +153,7 @@ describe('providers', () => {
 
   it('gateway: <url>/v1/<provider>, the gateway key, X-AI-Feature per task; from the environment by default; never without a key', async () => {
     const f = reply('{"title":"t"}');
-    await gateway({ url: 'https://gw.example/', key: 'aik_1', model: 'deepseek-chat', fetch: f as unknown as typeof fetch })('title', {}, {}, { instructions: '' });
+    await gateway({ url: 'https://gw.example/', key: 'aik_1', provider: 'deepseek', model: 'deepseek-chat', fetch: f as unknown as typeof fetch })('title', {}, {}, { instructions: '' });
     const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://gw.example/v1/deepseek/chat/completions');
     expect(init.headers).toMatchObject({ authorization: 'Bearer aik_1', 'x-ai-feature': 'trace-avatar-title' });
@@ -166,5 +166,123 @@ describe('providers', () => {
     vi.stubEnv('AI_GATEWAY_KEY', '');
     expect(() => gateway({ model: 'm' })).toThrow('AI_GATEWAY_URL and AI_GATEWAY_KEY');
     vi.unstubAllEnvs();
+  });
+
+  // A fetch that answers from a list, one per call, and keeps what it was sent.
+  const seq = (...rs: Array<[number, unknown, Record<string, string>?] | Error>) => {
+    const calls: Array<{ url: string; init: RequestInit; body: any }> = [];
+    const f = async (url: string, init: RequestInit) => {
+      calls.push({ url, init, body: JSON.parse(String(init.body)) });
+      const r = rs[Math.min(calls.length, rs.length) - 1];
+      if (r instanceof Error) throw r;
+      return new Response(typeof r[1] === 'string' ? r[1] : JSON.stringify(r[1]), { status: r[0], headers: r[2] ?? {} });
+    };
+    return { f: f as unknown as typeof fetch, calls };
+  };
+  const chat = (content: string) => ({ choices: [{ message: { content } }] });
+  const gem = (text: string, finishReason = 'STOP') => ({ candidates: [{ content: { parts: text ? [{ text }] : [] }, finishReason }] });
+  const IMG = [{ png: new Uint8Array([1, 2, 3]), label: 'after step 1' }];
+
+  it('retries a 429 or 5xx (following Retry-After) and an unreachable server; then gives up with the status and request id', async () => {
+    const a = seq([503, 'busy', { 'retry-after': '0' }], [429, 'slow down', { 'retry-after': '0' }], [200, chat('{"title":"t"}')]);
+    expect(await openAiCompatible({ baseUrl: 'http://x', model: 'm', fetch: a.f })('title', {}, {}, { instructions: '' })).toEqual({ title: 't' });
+    expect(a.calls).toHaveLength(3);
+    const b = seq([500, 'down', { 'retry-after': '0', 'x-ai-request-id': 'req_9' }]);
+    const e = await openAiCompatible({ baseUrl: 'http://x', model: 'm', retries: 1, fetch: b.f })('title', {}, {}, { instructions: '' }).catch((x: AssistError) => x);
+    expect(b.calls).toHaveLength(2);
+    expect(e).toMatchObject({ status: 500, info: { requestId: 'req_9' } });
+    const c = seq(new TypeError('fetch failed'), [200, chat('{"title":"t"}')]);
+    expect(await openAiCompatible({ baseUrl: 'http://x', model: 'm', retries: 1, fetch: c.f })('title', {}, {}, { instructions: '' })).toEqual({ title: 't' });
+    const d = seq(new TypeError('fetch failed'));
+    await expect(openAiCompatible({ baseUrl: 'http://x', model: 'm', retries: 0, fetch: d.f })('title', {}, {}, { instructions: '' })).rejects.toThrow('could not reach the model (fetch failed)');
+    // A 400 is the caller's mistake: no retry.
+    const g = seq([400, 'bad']);
+    await expect(openAiCompatible({ baseUrl: 'http://x', model: 'm', fetch: g.f })('title', {}, {}, { instructions: '' })).rejects.toThrow('(400)');
+    expect(g.calls).toHaveLength(1);
+  });
+
+  it('never retries a refusal by the gateway itself, and says which models the key allows', async () => {
+    const a = seq([403, { error: { source: 'ai-interface', message: 'model not allowed', allowed: ['deepseek-chat'] } }, { 'x-ai-request-id': 'req_1' }]);
+    const e = await gateway({ url: 'https://gw', key: 'k', provider: 'deepseek', fetch: a.f })('title', {}, {}, { instructions: '' }).catch((x: unknown) => x) as AssistError;
+    expect(a.calls).toHaveLength(1);
+    expect(e).toBeInstanceOf(AssistError);
+    expect(e.message).toContain('the AI gateway refused the call: model not allowed');
+    expect(e).toMatchObject({ status: 403, info: { requestId: 'req_1', allowed: ['deepseek-chat'] } });
+  });
+
+  it('Retry-After: seconds or an HTTP date; nothing useful is null', () => {
+    expect(retryAfterMs('2')).toBe(2000);
+    expect(retryAfterMs('Thu, 01 Jan 2026 00:00:05 GMT', Date.parse('Thu, 01 Jan 2026 00:00:00 GMT'))).toBe(5000);
+    for (const h of [null, '', ' ', '-1', 'soon']) expect(retryAfterMs(h)).toBeNull();
+  });
+
+  it('gemini: generateContent with the key in a header, images as inline data before the words, JSON mode, room to think', async () => {
+    const a = seq([200, gem('{"flags":[]}')]);
+    expect(await gemini({ key: 'g1', model: 'gemini-2.5-flash', fetch: a.f })('qa', { n: 1 }, { type: 'object' }, { instructions: 'Look.', images: IMG })).toEqual({ flags: [] });
+    const { url, init, body } = a.calls[0];
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
+    expect(init.headers).toMatchObject({ 'x-goog-api-key': 'g1' });
+    expect(init.headers).not.toHaveProperty('authorization');
+    expect(body.systemInstruction.parts[0].text).toContain('Look.');
+    expect(body.contents[0].parts).toEqual([{ text: 'after step 1' }, { inline_data: { mime_type: 'image/png', data: 'AQID' } }, { text: '{"n":1}' }]);
+    expect(body.generationConfig).toMatchObject({ responseMimeType: 'application/json' });
+    expect(body.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(4000);
+    const b = seq([200, gem('', 'MAX_TOKENS')]);
+    await expect(gemini({ key: 'g', model: 'gemini-2.5-flash', fetch: b.f })('title', {}, {}, { instructions: '' })).rejects.toThrow('spent its whole token budget thinking');
+    const c = seq([200, gem('')]);
+    await expect(gemini({ key: 'g', model: 'm', fetch: c.f })('title', {}, {}, { instructions: '' })).rejects.toThrow('without a message');
+  });
+
+  it('gateway: DeepSeek by default (deepseek-chat; deepseek-flash for images), falling back to Gemini, then OpenAI', async () => {
+    const a = seq([200, chat('{"title":"t"}')]);
+    const ai = gateway({ url: 'https://gw', key: 'k', fetch: a.f });
+    await ai('title', {}, {}, { instructions: '' });
+    await ai('qa', {}, {}, { instructions: '', images: IMG });
+    expect(a.calls.map((c) => [c.url, c.body.model])).toEqual([
+      ['https://gw/v1/deepseek/chat/completions', 'deepseek-chat'],
+      ['https://gw/v1/deepseek/chat/completions', 'deepseek-flash'],
+    ]);
+    expect(a.calls[1].body.messages[1].content[2].type).toBe('image_url');
+    // DeepSeek fails (after its retries) → Gemini through the gateway, with the gateway key as a Bearer.
+    const b = seq([400, 'no'], [200, gem('{"title":"g"}')]);
+    expect(await gateway({ url: 'https://gw', key: 'k', fetch: b.f })('title', {}, {}, { instructions: '' })).toEqual({ title: 'g' });
+    expect(b.calls[1].url).toBe('https://gw/v1/gemini/models/gemini-2.5-flash:generateContent');
+    expect(b.calls[1].init.headers).toMatchObject({ authorization: 'Bearer k', 'x-ai-feature': 'trace-avatar-title' });
+    expect(b.calls[1].init.headers).not.toHaveProperty('x-goog-api-key');
+    // … then OpenAI.
+    const c = seq([400, 'no'], [400, 'no'], [200, chat('{"title":"o"}')]);
+    expect(await gateway({ url: 'https://gw', key: 'k', fetch: c.f })('title', {}, {}, { instructions: '' })).toEqual({ title: 'o' });
+    expect(c.calls.map((x) => [x.url, x.body.model])).toEqual([
+      ['https://gw/v1/deepseek/chat/completions', 'deepseek-chat'],
+      ['https://gw/v1/gemini/models/gemini-2.5-flash:generateContent', undefined],
+      ['https://gw/v1/openai/chat/completions', 'gpt-4o-mini'],
+    ]);
+    // All fail: the last failure is what's thrown.
+    const d = seq([400, 'no']);
+    await expect(gateway({ url: 'https://gw', key: 'k', fetch: d.f })('title', {}, {}, { instructions: '' })).rejects.toThrow('(400)');
+    expect(d.calls).toHaveLength(3);
+  });
+
+  it('gateway: a named provider or order; a named model is used for images too unless a vision model is given', async () => {
+    const a = seq([200, chat('{"title":"t"}')]);
+    await gateway({ url: 'https://gw', key: 'k', provider: 'deepseek', model: 'deepseek-v4-pro', visionModel: 'deepseek-flash', fetch: a.f })('qa', {}, {}, { instructions: '', images: IMG });
+    expect(a.calls[0].body.model).toBe('deepseek-flash');
+    const b = seq([200, chat('{"title":"t"}')]);
+    await gateway({ url: 'https://gw', key: 'k', provider: 'openai', model: 'gpt-4o', fetch: b.f })('qa', {}, {}, { instructions: '', images: IMG });
+    expect(b.calls[0].body.model).toBe('gpt-4o');
+    const c = seq([200, gem('{"title":"g"}')]);
+    await gateway({ url: 'https://gw', key: 'k', provider: ['gemini', 'openai'], fetch: c.f })('qa', {}, {}, { instructions: '', images: IMG });
+    expect(c.calls).toHaveLength(1);
+    expect(c.calls[0].url).toContain('/v1/gemini/models/gemini-2.5-flash:generateContent');
+    expect(() => gateway({ url: 'https://gw', key: 'k', provider: 'mistral' })).toThrow('name a model for the gateway\'s "mistral"');
+    expect(typeof gateway({ url: 'https://gw', key: 'k', provider: 'mistral', model: 'mistral-small' })).toBe('function');
+  });
+
+  it('firstOf: the next only when one fails', async () => {
+    const ok = vi.fn(async () => ({ a: 1 }));
+    const bad = vi.fn(async () => { throw new Error('x'); });
+    expect(await firstOf(bad, ok, bad)('title', {}, {}, { instructions: '' })).toEqual({ a: 1 });
+    expect(bad).toHaveBeenCalledTimes(1);
+    await expect(firstOf(bad, bad)('title', {}, {}, { instructions: '' })).rejects.toThrow('x');
   });
 });

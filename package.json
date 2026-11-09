@@ -208,10 +208,16 @@
       "limit": "4 KB"
     },
     {
-      "name": "assist (AI suggestions; no model code)",
+      "name": "assist in a page (suggest, apply; the ai function calls your backend)",
       "path": "dist/assist.js",
-      "import": "{ suggest, apply, openAiCompatible }",
-      "limit": "4.5 KB"
+      "import": "{ suggest, apply }",
+      "limit": "4 KB"
+    },
+    {
+      "name": "assist with the providers (server side: openAiCompatible, gemini, gateway with retries and fallback)",
+      "path": "dist/assist.js",
+      "import": "{ suggest, apply, openAiCompatible, gemini, gateway }",
+      "limit": "6 KB"
     },
     {
       "name": "studio's Suggest section (trace-studio-assist.min.js, loaded on first use)",
