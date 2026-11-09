@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Do it for me brings rich-text editors to what was typed.** 0.1.10's fixes still lost, doubled or reordered
+  letters now and then in Lexical ("send me atabl.", "FiFi", text cut off at the end): an editor takes an insert in,
+  renders it later, and now and then drops one. Now the performer keeps the text typed so far for each field, and
+  each time the field's text changes it compares the two: the start of it, the rest goes in at the end; anything
+  else, the whole text is put back (at most `RICH_FIXES`, 3, times: an editor may rewrite text on purpose). Nothing
+  is sent while an insert is on its way; a change that leaves the text as it was (a repaint on focus) is not taken
+  for the insert showing. An insert that changes nothing for `RICH_RETRY_MS` (1.5 s) is sent again, at most
+  `RICH_FIXES` times in a row. The field is focused again if it lost the focus, and after the caret or focus moves
+  the insert waits a task (the editor reads it from `selectionchange`).
+- Budgets: perform 15.75 → 16.25 KB (16.1 KB). Core and React back to 14.25 KB (0.1.10's change to the player's
+  loop is gone; 14.2 KB).
+
 ## 0.1.10 (9 Nov 2026)
 
 - **Do it for me in rich-text editors:** typing now starts one task after the field is focused. Lexical (and

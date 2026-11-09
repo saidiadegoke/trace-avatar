@@ -10,6 +10,11 @@
  * (best effort, with a plain fallback).
  */
 
+/** A rich-text field is checked again this long after an insert that changed nothing (an editor dropped it). Long: an editor under load can take a while to show an insert, and taking that for a drop types it twice. */
+export const RICH_RETRY_MS = 1500;
+/** How many times a rich-text field's text is put back, or a dropped insert sent again in a row (see `settle`). */
+export const RICH_FIXES = 3;
+
 export interface Performer {
   click(el: Element, x?: number, y?: number, double?: boolean): void;
   hover(el: Element, x?: number, y?: number): void;
@@ -17,7 +22,7 @@ export interface Performer {
   key(el: Element | null, combo: string): void;
   /** Focus a field and empty it, ready for typing. Returns the field typed into. */
   startTyping(el: Element): Element;
-  /** Type text[from, to) into the field (it already holds text[0, from)). */
+  /** Type text[from, to) into the field after text[0, from) (a rich-text field is brought to it: see `settle`). */
   typeTo(field: Element, text: string, from: number, to: number): void;
   /** Typing is done: fire `change` as a person leaving the field would. */
   finishTyping(field: Element): void;
@@ -113,6 +118,90 @@ export function createPerformer(doc: Document): Performer {
    * after the field's last child. Firefox leaves a caret there, outside every paragraph, and an editor like
    * Lexical ignores what is typed at it (only the first letter got in).
    */
+  /** Whether the caret is in the field with no text after it. */
+  const caretAtEnd = (field: Element): boolean => {
+    const sel = doc.getSelection?.();
+    if (!sel?.rangeCount || !sel.isCollapsed || !sel.anchorNode || !field.contains(sel.anchorNode)) return false;
+    const after = doc.createRange();
+    after.selectNodeContents(field);
+    after.setStart(sel.anchorNode, sel.anchorOffset);
+    return after.toString() === '';
+  };
+  /**
+   * Rich-text fields keep what has been typed so far (`want`) and are brought to it: an editor like Lexical takes
+   * an insert in, renders it later, and now and then drops one. So each time the field changes (a
+   * MutationObserver), or RICH_RETRY_MS after an insert that changed nothing, its text is compared with `want`:
+   * the same, done; the start of it, the rest goes in at the end; anything else (a piece was lost), its whole
+   * text is replaced with `want`, at most RICH_FIXES times (an editor may rewrite text on purpose: autocorrect,
+   * "- " into a list). Nothing is sent while an insert is still on its way, so nothing is typed twice. The first
+   * insert waits for the task after the focus: the editor learns of its focus from `selectionchange`.
+   */
+  interface Rich { want: string; sent: boolean; at?: string; going?: boolean; fixes: number; tries: number; obs?: MutationObserver; timer?: ReturnType<typeof setTimeout> }
+  const rich = new WeakMap<Element, Rich>();
+  const win = () => doc.defaultView ?? globalThis;
+  const flat = (t: string | null) => (t ?? '').replace(/\s+/g, ' ');
+  function enqueue(field: Element, chunk: string) {
+    let r = rich.get(field);
+    if (!r) {
+      const st: Rich = { want: '', sent: true, fixes: 0, tries: 0 };
+      r = st;
+      rich.set(field, st);
+      const MO = (win() as typeof globalThis).MutationObserver;
+      if (MO) { st.obs = new MO(() => {
+        // A change that leaves the text as it was when the insert went (a focus repaint, a class) is not the
+        // insert showing: sending again then would type it twice ("FiFi").
+        if (st.sent && st.at !== undefined && flat(field.textContent) === st.at) return;
+        st.sent = false; st.at = undefined; st.tries = 0; settle(field);
+      }); st.obs.observe(field, { childList: true, characterData: true, subtree: true }); }
+      win().setTimeout(() => { st.sent = false; settle(field); }, 0); // after the focus task
+    }
+    r.want += chunk;
+    if (!r.sent) settle(field);
+  }
+  function settle(field: Element) {
+    const r = rich.get(field);
+    // Not while an insert is on its way, or waiting for its task (a change meanwhile, like the editor
+    // re-rendering on focus, must not send it a second time: "FiFi").
+    if (!r || r.sent || r.going) return;
+    const shown = flat(field.textContent);
+    const want = flat(r.want);
+    if (shown === want) return;
+    const replace = !want.startsWith(shown);
+    if (replace && r.fixes >= RICH_FIXES) return;
+    if (replace) r.fixes += 1;
+    // The selection to type at: everything (to put the text back), else the end. When it (or the focus) has to
+    // move, the insert waits for the next task: the editor reads it from `selectionchange`, a task later.
+    let moved = false;
+    // Typing needs the focus: an editor that lost it ignores every insert.
+    if (!field.contains(doc.activeElement)) { focus(field); moved = true; }
+    if (replace) {
+      const range = doc.createRange();
+      range.selectNodeContents(field);
+      const sel = doc.getSelection?.();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      moved = true;
+    } else if (!caretAtEnd(field)) { caretToEnd(field); moved = true; }
+    r.sent = true;
+    r.at = shown;
+    const go = () => {
+      r.going = false;
+      // Read when it goes: more may have been typed meanwhile.
+      const text = replace ? r.want : flat(r.want).slice(shown.length);
+      win().clearTimeout(r.timer);
+      // Nothing changed by then: the insert was dropped. Try again, at most RICH_FIXES times in a row.
+      r.timer = win().setTimeout(() => { r.tries += 1; if (r.tries <= RICH_FIXES) { r.sent = false; r.at = undefined; settle(field); } }, RICH_RETRY_MS);
+      if (!exec('insertText', text)) {
+        const before = new Input('beforeinput', { bubbles: true, cancelable: true, composed: true, data: text, inputType: 'insertText' } as InputEventInit);
+        if (field.dispatchEvent(before)) {
+          if (replace) field.textContent = '';
+          field.appendChild(doc.createTextNode(text));
+          inputEvent(field, text, 'insertText');
+        }
+      }
+    };
+    if (moved) { r.going = true; win().setTimeout(go, 0); } else go();
+  }
   const caretToEnd = (field: Element) => {
     const sel = doc.getSelection?.();
     if (!sel) return;
@@ -164,6 +253,10 @@ export function createPerformer(doc: Document): Performer {
       focus(field);
       if (field.tagName === 'SELECT') return field;
       if (isRich(field)) {
+        const old = rich.get(field);
+        old?.obs?.disconnect();
+        if (old) win().clearTimeout(old.timer);
+        rich.delete(field);
         if (field.textContent) {
           const sel = doc.getSelection?.();
           const range = doc.createRange();
@@ -191,17 +284,7 @@ export function createPerformer(doc: Document): Performer {
         return;
       }
       const chunk = text.slice(from, to);
-      if (isRich(field)) {
-        caretToEnd(field);
-        if (!exec('insertText', chunk)) {
-          const before = new Input('beforeinput', { bubbles: true, cancelable: true, composed: true, data: chunk, inputType: 'insertText' } as InputEventInit);
-          if (field.dispatchEvent(before)) {
-            field.appendChild(doc.createTextNode(chunk));
-            inputEvent(field, chunk, 'insertText');
-          }
-        }
-        return;
-      }
+      if (isRich(field)) { enqueue(field, chunk); return; }
       setNativeValue(field, text.slice(0, to));
       inputEvent(field, chunk, 'insertText');
     },

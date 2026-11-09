@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPerformer, fieldOf, parseCombo, setNativeValue } from '../../src/shell/perform.dom';
+import { RICH_FIXES, RICH_RETRY_MS, createPerformer, fieldOf, parseCombo, setNativeValue } from '../../src/shell/perform.dom';
 import { html } from './dom-helpers';
 
 afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks(); });
@@ -155,6 +155,7 @@ describe('createPerformer', () => {
   });
 
   it('rich text: insertText when the browser has it; otherwise beforeinput + a text node + input', () => {
+    vi.useFakeTimers();
     html('<div id="r" contenteditable="true">old</div>');
     const el = $('#r');
     const hands = createPerformer(document);
@@ -166,6 +167,7 @@ describe('createPerformer', () => {
     (document as Document & { execCommand: unknown }).execCommand = exec;
     const field = hands.startTyping(el);
     hands.typeTo(field, 'Hello', 0, 5);
+    vi.advanceTimersByTime(0);
     expect(el.textContent).toBe('Hello');
     expect(exec.mock.calls.map((c) => c[0])).toEqual(['delete', 'insertText']);
 
@@ -175,28 +177,132 @@ describe('createPerformer', () => {
     hands.startTyping(el);
     expect(el.textContent).toBe('');
     hands.typeTo(el, 'Hi', 0, 2);
+    vi.advanceTimersByTime(0);
     expect(el.textContent).toBe('Hi');
     expect(log.map(([t, , d]) => `${t}:${d.data ?? ''}`)).toEqual(['input:', 'beforeinput:Hi', 'input:Hi']);
 
     // An editor that handles beforeinput itself (prevents it) gets nothing extra.
     el.addEventListener('beforeinput', (e) => e.preventDefault());
     hands.typeTo(el, 'Hi!', 2, 3);
+    vi.advanceTimersByTime(50);
     expect(el.textContent).toBe('Hi');
     hands.finishTyping(el); // no change event for rich text
+    // It refuses every insert: the retries stop after RICH_FIXES, and none is left waiting for the next test.
+    vi.runAllTimers();
+    vi.useRealTimers();
   });
 
-  it('rich text: each insert goes at the end of the last text, or into the empty last line, never after the last paragraph', () => {
-    html('<div id="r" contenteditable="true"><p>One</p><p><span>Two</span></p></div><div id="e" contenteditable="true"><p><br></p></div>');
-    const hands = createPerformer(document);
-    const at: string[] = [];
-    (document as Document & { execCommand: unknown }).execCommand = vi.fn((cmd: string) => {
-      const sel = document.getSelection()!;
-      if (cmd === 'insertText') at.push(`${sel.anchorNode?.nodeName}:${sel.anchorNode?.textContent}@${sel.anchorOffset}`);
-      return cmd === 'insertText';
-    });
-    hands.typeTo($('#r'), 'x', 0, 1);
-    hands.typeTo($('#e'), 'y', 0, 1);
-    expect(at).toEqual(['#text:Two@3', 'P:@1']); // Firefox would leave a caret on the div, where Lexical ignores input
+  it('rich text: a change in the field while an insert waits for its task does not send it twice ("FiFi")', async () => {
+    vi.useFakeTimers();
+    try {
+      html('<div id="r" contenteditable="true"><p><br></p></div><button id="away">x</button>');
+      const el = $('#r');
+      const hands = createPerformer(document);
+      const sent: string[] = [];
+      (document as Document & { execCommand: unknown }).execCommand = vi.fn((cmd: string, _u?: boolean, value?: string) => {
+        if (cmd === 'insertText') sent.push(value!);
+        return cmd === 'insertText';
+      });
+      const f = hands.startTyping(el);
+      hands.typeTo(f, 'Fi', 0, 2);
+      document.getSelection()!.removeAllRanges();         // the caret is elsewhere: it must be put back first
+      await vi.advanceTimersByTimeAsync(0);               // the focus task: the caret moves, the insert waits a task
+      el.querySelector('p')!.setAttribute('dir', 'auto'); // the editor re-renders meanwhile
+      el.querySelector('p')!.appendChild(document.createTextNode(''));
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sent).toEqual(['Fi']);
+      vi.runAllTimers();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rich text: a change that leaves the text as it was after an insert went (a repaint) does not send it again', async () => {
+    vi.useFakeTimers();
+    try {
+      html('<div id="r" contenteditable="true"><p><br></p></div>');
+      const el = $('#r');
+      const hands = createPerformer(document);
+      const sent: string[] = [];
+      let render: (() => void) | undefined;
+      (document as Document & { execCommand: unknown }).execCommand = vi.fn((cmd: string, _u?: boolean, value?: string) => {
+        if (cmd !== 'insertText') return false;
+        sent.push(value!);
+        render = () => { el.querySelector('p')!.textContent = value!; };
+        return true;
+      });
+      const f = hands.startTyping(el);
+      hands.typeTo(f, 'Fi', 0, 2);
+      await vi.advanceTimersByTimeAsync(1);               // the focus task: the insert goes, not shown yet
+      expect(sent).toEqual(['Fi']);
+      el.querySelector('p')!.replaceChildren(document.createElement('br')); // a repaint: nodes change, the text does not
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sent).toEqual(['Fi']);
+      render!();                                          // the insert shows
+      await vi.advanceTimersByTimeAsync(1);
+      expect(el.textContent).toBe('Fi');
+      expect(sent).toEqual(['Fi']);
+      vi.runAllTimers();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rich text is brought to what was typed: appended at the end, a dropped piece put back, never sent twice', async () => {
+    vi.useFakeTimers();
+    try {
+      html('<div id="r" contenteditable="true"><p><br></p></div>');
+      const el = $('#r');
+      const hands = createPerformer(document);
+      const sent: string[] = [];
+      let drop = false;
+      const queue: Array<() => void> = [];
+      // Like Lexical: an insert shows up later (render()), at the caret; one may be dropped.
+      (document as Document & { execCommand: unknown }).execCommand = vi.fn((cmd: string, _u?: boolean, value?: string) => {
+        if (cmd !== 'insertText') return false;
+        sent.push(value!);
+        const sel = document.getSelection()!;
+        const all = !sel.isCollapsed;
+        if (!drop) queue.push(() => { const p = el.querySelector('p') ?? el.appendChild(document.createElement('p')); p.textContent = (all ? '' : (p.textContent ?? '')) + value; });
+        return true;
+      });
+      const render = async () => { queue.splice(0).forEach((f) => f()); await vi.advanceTimersByTimeAsync(1); };
+
+      const f = hands.startTyping(el);
+      hands.typeTo(f, 'Find the', 0, 1);
+      expect(sent).toEqual([]);                          // not during the call: after the focus task, then the
+      await vi.advanceTimersByTimeAsync(1);              // task after the caret is put in the field
+      expect(sent).toEqual(['F']);
+      hands.typeTo(f, 'Find the', 1, 3);
+      hands.typeTo(f, 'Find the', 3, 4);
+      expect(sent).toEqual(['F']);                       // "F" is on its way: nothing more until it shows
+      await render();
+      expect(sent).toEqual(['F', 'ind']);                // then all that is due, at once, at the end
+      await render();
+      expect(el.textContent).toBe('Find');
+
+      drop = true;                                       // the editor drops " th"…
+      hands.typeTo(f, 'Find the', 4, 7);
+      await render();
+      drop = false;
+      hands.typeTo(f, 'Find the', 7, 8);                 // …and "e" would follow it: "Finde"
+      await vi.advanceTimersByTimeAsync(RICH_RETRY_MS);  // the dropped insert changed nothing: try again
+      await render();
+      expect(el.textContent).toBe('Find the');
+      expect(sent.slice(2)).toEqual([' th', ' the']);
+
+      // An editor that rewrites the text on purpose is put back at most RICH_FIXES times, then left alone.
+      const n = sent.length;
+      for (let k = 0; k < RICH_FIXES + 2; k += 1) {
+        el.querySelector('p')!.textContent = '• Find the';
+        await vi.advanceTimersByTimeAsync(RICH_RETRY_MS);
+        await render();
+      }
+      expect(sent.length - n).toBe(RICH_FIXES);
+      expect(sent.slice(n)).toEqual(Array(RICH_FIXES).fill('Find the'));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a select picks the option by its text (or value), once, when typing reaches the end', () => {
