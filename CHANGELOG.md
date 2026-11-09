@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.9 (9 Nov 2026)
 
 - **Fix a wait whose text changed:** a guide that stalls with `until-timeout` (it waited for "Saved"; the app now says
   "Changes stored") gets the Fix this step card too: "Is it “Changes stored”?" (code scores first, `record.ai` only
