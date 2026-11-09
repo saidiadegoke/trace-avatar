@@ -153,7 +153,7 @@ export function createRenderer(o: RendererOptions): RendererPort & { host: HTMLE
 
   // Last applied values (dirty checking).
   let lx = NaN; let ly = NaN; let lCls = ''; let lRing = ''; let lRingOn = false;
-  let lCapKey: number | null = null; let lChip: string | null = null; let lCount = ''; let lPlaying: boolean | null = null; let lRate = '';
+  let lCap = ''; let lChip: string | null = null; let lCount = ''; let lPlaying: boolean | null = null; let lRate = '';
   let pool = 0;
   const flip: boolean[] = [false, false, false, false];
 
@@ -182,16 +182,17 @@ export function createRenderer(o: RendererOptions): RendererPort & { host: HTMLE
       const ringOn = !!v.ring && c.visible;
       if (ringOn !== lRingOn) { ring.classList.toggle('on', ringOn); lRingOn = ringOn; }
 
-      const capKey = o.captions === 'none' || !c.visible ? null : v.caption ? v.caption.key : null;
-      if (capKey !== lCapKey) {
-        const text = capKey === null ? '' : v.caption!.text;
+      // A caption without a cursor ("Open /app to continue", "Sign in to start this guide.") has
+      // nothing to hang a bubble on: it shows as the bar at the bottom instead.
+      const text = o.captions === 'none' || !v.caption ? '' : v.caption.text;
+      const asBar = o.captions === 'bar' || (!c.visible && !!text);
+      const cap = `${v.caption?.key ?? ''}|${text}|${asBar}`;
+      if (cap !== lCap) {
         live.textContent = text;
-        if (o.captions === 'bar') live.classList.toggle('on', !!text);
-        if (o.captions === 'bubble') {
-          if (text) bubble.textContent = text;
-          bubble.classList.toggle('on', !!text);
-        }
-        lCapKey = capKey;
+        live.className = asBar ? `bar${text ? ' on' : ''}` : 'sr';
+        if (text && !asBar) bubble.textContent = text;
+        bubble.classList.toggle('on', !!text && !asBar);
+        lCap = cap;
       }
 
       const chipText = c.visible ? v.chip : null;

@@ -359,3 +359,228 @@ describe('pages', () => {
     expect(u.state).toBe('ended');
   });
 });
+
+describe('perform mode, prepare, reset, resume, until (0.1.2)', () => {
+  const fakeHands = () => {
+    const calls: unknown[][] = [];
+    const field = document.createElement('input');
+    const performer = vi.fn(() => ({
+      click: (el: Element, x?: number, y?: number, dbl?: boolean) => { calls.push(['click', el.id, x, y, !!dbl]); },
+      hover: (el: Element) => { calls.push(['hover', el.id]); },
+      key: (el: Element | null, combo: string) => { calls.push(['key', el?.id ?? null, combo]); },
+      startTyping: (el: Element) => { calls.push(['start', el.id]); return field; },
+      typeTo: (_f: Element, text: string, from: number, to: number) => { calls.push(['type', text.slice(from, to)]); },
+      finishTyping: () => { calls.push(['finish']); },
+      focus: (el: Element) => { calls.push(['focus', el.id]); },
+    }));
+    return { calls, performer };
+  };
+
+  it("mode: 'perform' needs a performer", () => {
+    expect(() => make({ mode: 'perform' })).toThrow(/trace-avatar\/perform/);
+  });
+
+  it('acts out each step through the performer, typing as the chip does, then change', async () => {
+    const { calls, performer } = fakeHands();
+    const tr: Trace = { version: 1, steps: [
+      { type: 'click', target: { sel: '#a' }, t: 300 },
+      { type: 'type', target: { sel: '#b' }, text: 'Ada', t: 900 },
+      { type: 'key', keys: 'Mod+Enter' },
+      { type: 'hover', target: { sel: '#a' } },
+      { type: 'dblclick', target: { sel: '#b' } },
+    ] };
+    const t = make({ trace: tr, mode: 'perform', performer, reducedMotion: true });
+    await t.ready;
+    t.play();
+    clock.run(6000);
+    expect(performer).toHaveBeenCalledWith(document);
+    expect(calls.filter((c) => c[0] === 'type').map((c) => c[1]).join('')).toBe('Ada');
+    expect(calls.filter((c) => c[0] === 'type').length).toBeGreaterThan(1); // progressively
+    expect(calls.filter((c) => c[0] !== 'type')).toEqual([
+      ['click', 'a', 150, 120, false], ['start', 'b'], ['finish'], ['key', null, 'Mod+Enter'], ['hover', 'a'], ['click', 'b', 550, 320, true],
+    ]);
+    expect(t.state).toBe('ended');
+  });
+
+  it('a performer failure is reported as an error and the guide goes on', async () => {
+    const performer = () => ({
+      click: () => { throw new Error('boom'); }, hover() {}, key() {}, focus() {},
+      startTyping: (el: Element) => el, typeTo: () => { throw new Error('no typing'); }, finishTyping() {},
+    });
+    const errors: string[] = [];
+    const tr: Trace = { version: 1, steps: [{ type: 'click', target: { sel: '#a' }, t: 100 }, { type: 'type', target: { sel: '#b' }, text: 'x', t: 600 }, { type: 'click', target: { sel: '#gone' }, timeout: 50 }] };
+    const t = make({ trace: tr, mode: 'perform', performer });
+    await t.ready;
+    t.on('error', (e) => errors.push(e.message));
+    t.play();
+    clock.run(4000);
+    expect(errors).toEqual(['perform step 0 (click) failed: boom', 'perform step 1 (type) failed: no typing']);
+    expect(t.state).toBe('ended');
+  });
+
+  it('a masked field is handed to the viewer: focus, handoff event, then play goes on', async () => {
+    const { calls, performer } = fakeHands();
+    const tr: Trace = { version: 1, steps: [{ type: 'type', target: { sel: '#a' }, text: '•••', mask: true, t: 300 }, { type: 'click', target: { sel: '#b' } }] };
+    const t = make({ trace: tr, mode: 'perform', performer });
+    await t.ready;
+    const handoff = vi.fn();
+    t.on('handoff', handoff);
+    t.play();
+    clock.run(1500);
+    expect(t.state).toBe('paused');
+    expect(handoff).toHaveBeenCalledWith(expect.objectContaining({ index: 0, element: document.getElementById('a') }));
+    expect(calls).toEqual([['focus', 'a']]);
+    t.play();
+    clock.run(2000);
+    expect(calls).toContainEqual(['click', 'b', 550, 320, false]);
+  });
+
+  it('prepare gates every start: true plays, false / {ok:false} / throwing blocks with a caption; play retries', async () => {
+    const answers: unknown[] = [false, { ok: false, say: 'Open the sandbox first.' }, 'throw', { ok: true }];
+    const prepare = vi.fn(async (requires: string[]) => {
+      const a = answers.shift();
+      if (a === 'throw') throw new Error('no session');
+      expect(requires).toEqual(['signed-in']);
+      return a as boolean;
+    });
+    const t = make({ trace: { ...TRACE, meta: { requires: ['signed-in'] } }, prepare });
+    await t.ready;
+    const blocked = vi.fn();
+    t.on('blocked', blocked);
+    const caption = () => document.querySelector('[data-trace-avatar]')!.shadowRoot!.textContent;
+    t.play();
+    t.play(); // a second press while prepare runs is ignored
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledTimes(1));
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(blocked.mock.calls[0][0]).toEqual({ requires: ['signed-in'], say: 'Sign in to start this guide.' });
+    expect(caption()).toContain('Sign in to start this guide.');
+    expect(t.state).toBe('idle');
+    t.play();
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledTimes(2));
+    expect(blocked.mock.calls[1][0].say).toBe('Open the sandbox first.');
+    t.play();
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledTimes(3));
+    expect(blocked.mock.calls[2][0].error).toBeInstanceOf(Error);
+    t.play();
+    await vi.waitFor(() => expect(t.state).toBe('playing'));
+    clock.frame();
+    expect(caption()).not.toContain('Sign in');
+  });
+
+  it('without signed-in in requires, the default message is neutral; destroying while preparing is safe', async () => {
+    let release: (v: boolean) => void = () => {};
+    const t = make({ trace: TRACE, prepare: () => new Promise<boolean>((r) => { release = r; }) });
+    await t.ready;
+    t.play();
+    t.destroy();
+    release(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(t.state).toBe('idle');
+    const u = make({ trace: TRACE, prepare: () => false });
+    await u.ready;
+    const blocked = vi.fn();
+    u.on('blocked', blocked);
+    u.play();
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalled());
+    expect(blocked.mock.calls[0][0].say).toBe('This guide can’t start yet.');
+    let rejectIt: (e: Error) => void = () => {};
+    const w = make({ trace: TRACE, prepare: () => new Promise<boolean>((_, rej) => { rejectIt = rej; }) });
+    await w.ready;
+    w.play();
+    w.destroy();
+    rejectIt(new Error('late'));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  it('perform mode resets the app before every start after the first: restart, seek(0), play after the end', async () => {
+    const { performer } = fakeHands();
+    const onReset = vi.fn(async () => {});
+    const t = make({ trace: TRACE, mode: 'perform', performer, onReset });
+    await t.ready;
+    t.play();
+    await vi.waitFor(() => expect(t.state).toBe('playing'));
+    expect(onReset).not.toHaveBeenCalled();
+    clock.run(800);
+    t.seek(0);
+    await vi.waitFor(() => expect(onReset).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(t.state).toBe('playing'));
+    expect(t.time).toBeLessThan(100);
+    clock.run(5000);
+    expect(t.state).toBe('ended');
+    t.play();
+    await vi.waitFor(() => expect(onReset).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(t.state).toBe('playing'));
+    // Overlay mode never calls it.
+    const o = make({ trace: TRACE, onReset });
+    await o.ready;
+    o.play(); clock.run(5000); o.play();
+    expect(onReset).toHaveBeenCalledTimes(2);
+  });
+
+  it('resumeKey: saves each step, resumes on the next page from the following step, forgets at the end', async () => {
+    sessionStorage.clear();
+    const t = make({ trace: TRACE, resumeKey: 'tour' });
+    await t.ready;
+    t.play();
+    clock.run(700);
+    expect(JSON.parse(sessionStorage.getItem('trace-avatar:tour')!)).toMatchObject({ i: 0, n: 2 });
+    t.destroy(); // the page unloads
+
+    const again = make({ trace: TRACE, resumeKey: 'tour', autoplay: true });
+    await again.ready;
+    expect(again.index).toBe(1);
+    const steps: number[] = [];
+    again.on('step', (e) => steps.push(e.index));
+    clock.run(3000);
+    expect(steps).toEqual([1]);
+    expect(again.state).toBe('ended');
+    expect(sessionStorage.getItem('trace-avatar:tour')).toBeNull();
+  });
+
+  it('resume is skipped when the save is old, for another trace, the last step, on the wrong page, or unreadable; stop forgets', async () => {
+    const put = (v: unknown) => sessionStorage.setItem('trace-avatar:k', typeof v === 'string' ? v : JSON.stringify(v));
+    const index = async (o: Partial<TraceOptions> = {}) => { const t = make({ trace: TRACE, resumeKey: 'k', ...o }); await t.ready; const i = t.index; const st = t.state; t.destroy(); return [i, st]; };
+    put({ i: 0, n: 2, at: Date.now() - 11 * 60_000 });
+    expect(await index()).toEqual([0, 'idle']);
+    put({ i: 0, n: 5, at: Date.now() });
+    expect(await index()).toEqual([0, 'idle']);
+    put({ i: 1, n: 2, at: Date.now() });
+    expect(await index()).toEqual([0, 'idle']);
+    put('{not json');
+    expect(await index()).toEqual([0, 'idle']);
+    put({ i: 'x', n: 2, at: Date.now() });
+    expect(await index()).toEqual([0, 'idle']);
+    const paged: Trace = { version: 1, steps: [{ type: 'click', target: { sel: '#a' }, page: '/one' }, { type: 'click', target: { sel: '#b' }, page: '/two' }] };
+    put({ i: 0, n: 2, at: Date.now() });
+    expect(await index({ trace: paged, currentPath: () => '/one' })).toEqual([0, 'idle']);
+    put({ i: 0, n: 2, at: Date.now() });
+    expect(await index({ trace: paged, currentPath: () => '/two' })).toEqual([1, 'paused']);
+    put({ i: 0, n: 2, at: Date.now() });
+    const s = make({ trace: TRACE, resumeKey: 'k' });
+    await s.ready;
+    s.stop();
+    expect(sessionStorage.getItem('trace-avatar:k')).toBeNull();
+    // Storage that throws (private mode, blocked) means no resume and no crash.
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('denied'); });
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('denied'); });
+    const rm = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('denied'); });
+    const q = make({ trace: TRACE, resumeKey: 'k' });
+    await q.ready;
+    q.play(); clock.run(5000); q.stop();
+    expect(q.state).toBe('idle');
+    get.mockRestore(); set.mockRestore(); rm.mockRestore();
+  });
+
+  it('wait … until uses the real page: holds until the text shows up', async () => {
+    const tr: Trace = { version: 1, steps: [{ type: 'wait', target: { sel: '#a' }, until: { text: 'Running' }, timeout: 60_000 }, { type: 'click', target: { sel: '#b' } }] };
+    const t = make({ trace: tr });
+    await t.ready;
+    t.play();
+    clock.run(2000);
+    expect(t.state).toBe('waiting');
+    document.getElementById('a')!.textContent = 'Running';
+    await new Promise((r) => setTimeout(r, 0));
+    clock.run(2000);
+    expect(t.index).toBe(1);
+  });
+});

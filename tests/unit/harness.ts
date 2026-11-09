@@ -21,6 +21,8 @@ export class Sim {
   looks: Record<number, Look | null>;
   /** The viewer's page; undefined = unknown (every page matches). */
   at: string | undefined = undefined;
+  /** Whether each step's `until` holds; null = don't pass `met` (every until counts as met). */
+  mets: Record<number, boolean> | null = null;
   vp = { w: 1280, h: 800 };
   lookCalls = 0;
 
@@ -40,7 +42,8 @@ export class Sim {
 
   frame(dt = 16): Effect[] {
     this.now += dt;
-    return this.send({ kind: 'frame', now: this.now, look: this.look, vp: this.vp, ...(this.at !== undefined ? { at: this.at } : {}) });
+    const mets = this.mets;
+    return this.send({ kind: 'frame', now: this.now, look: this.look, vp: this.vp, ...(this.at !== undefined ? { at: this.at } : {}), ...(mets ? { met: (i: number) => !!mets[i] } : {}) });
   }
 
   /** Run frames until `ms` of wall time has passed. */

@@ -3,7 +3,8 @@
  *
  * Custom-element adapter: connected → create, disconnected → destroy,
  * attribute change → rebuild. Events are re-dispatched as DOM events:
- * trace-step, trace-stalled, trace-page, trace-state, trace-end, trace-error.
+ * trace-step, trace-stalled, trace-page, trace-handoff, trace-blocked, trace-state, trace-end, trace-error.
+ * Attributes `mode="perform"` and `resume-key`; functions (prepare, onReset, navigate, performer) go on `.hooks`.
  */
 
 import { createTrace } from '../index';
@@ -12,8 +13,11 @@ import type { CaptionMode } from '../shell/renderer.shadow';
 
 const BOOL = ['controls', 'autoplay', 'loop', 'keyboard'] as const;
 
+/** Options that can't be attributes, because they are functions. */
+export type Hooks = Pick<TraceOptions, 'prepare' | 'onReset' | 'navigate' | 'currentPath' | 'performer'>;
+
 export class TraceAvatarElement extends HTMLElement {
-  static observedAttributes = ['src', 'captions', 'rate', 'takeover', 'avatar-name', 'avatar-image', 'avatar-color', ...BOOL];
+  static observedAttributes = ['src', 'captions', 'rate', 'takeover', 'mode', 'resume-key', 'avatar-name', 'avatar-image', 'avatar-color', ...BOOL];
 
   private ctl: TraceController | null = null;
   private obj: Trace | null = null;
@@ -23,6 +27,11 @@ export class TraceAvatarElement extends HTMLElement {
   set trace(t: Trace | null) { this.obj = t; if (this.isConnected) this.rebuild(); }
 
   get controller(): TraceController | null { return this.ctl; }
+
+  private fns: Hooks = {};
+  /** The options that are functions: `prepare`, `onReset`, `navigate`, `currentPath`, `performer`. */
+  get hooks(): Hooks { return this.fns; }
+  set hooks(h: Hooks) { this.fns = { ...h }; if (this.isConnected) this.rebuild(); }
 
   play() { this.ctl?.play(); }
   pause() { this.ctl?.pause(); }
@@ -63,6 +72,9 @@ export class TraceAvatarElement extends HTMLElement {
       keyboard: this.hasAttribute('keyboard'),
       captions: (this.getAttribute('captions') as CaptionMode) || undefined,
       takeover: (this.getAttribute('takeover') as 'pause' | 'ignore') || undefined,
+      ...(this.getAttribute('mode') === 'perform' ? { mode: 'perform' as const } : {}),
+      ...(this.getAttribute('resume-key') ? { resumeKey: this.getAttribute('resume-key')! } : {}),
+      ...this.fns,
       rate: Number.isFinite(rate) && rate > 0 ? rate : undefined,
       avatar,
     };
@@ -79,6 +91,8 @@ export class TraceAvatarElement extends HTMLElement {
       c.on('step', (d) => fire('trace-step', d));
       c.on('stalled', (d) => fire('trace-stalled', d));
       c.on('page', (d) => fire('trace-page', d));
+      c.on('handoff', (d) => fire('trace-handoff', d));
+      c.on('blocked', (d) => fire('trace-blocked', d));
       c.on('state', (d) => fire('trace-state', d));
       c.on('end', () => fire('trace-end'));
       c.on('error', (d) => fire('trace-error', d));

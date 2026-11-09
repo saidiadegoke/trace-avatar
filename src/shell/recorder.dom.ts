@@ -37,6 +37,8 @@ export interface RecorderOptions {
   ignore?: string;
   title?: string;
   avatar?: Avatar;
+  /** What the guide needs before it starts (copied to meta.requires), e.g. ['signed-in']. */
+  requires?: string[];
   /** Pauses longer than this play back as 1.5 s. Default 4000; 0 keeps real time. */
   maxGapMs?: number;
   /** 'auto' (default) drops scrolls the player does anyway; 'all' keeps every scroll. */
@@ -243,6 +245,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
         avatar: opts.avatar,
         meta: {
           ...(opts.title ? { title: opts.title } : {}),
+          ...(opts.requires?.length ? { requires: [...opts.requires] } : {}),
           recordedAt: new Date().toISOString(),
           viewport: { w: win.innerWidth || 1, h: win.innerHeight || 1 },
           // Where playback must begin: the page the recording started on.

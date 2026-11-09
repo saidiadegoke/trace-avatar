@@ -19,7 +19,8 @@
         },
         "seed": { "type": "number" },
         "pointer": { "enum": ["mouse", "touch"] },
-        "truncated": { "type": "boolean" }
+        "truncated": { "type": "boolean" },
+        "requires": { "type": "array", "maxItems": 10, "items": { "type": "string", "minLength": 1, "maxLength": 60 }, "description": "What the guide needs before it starts (host-defined names, e.g. signed-in)" }
       }
     },
     "avatar": {
@@ -69,7 +70,15 @@
         "pause": { "type": "boolean" },
         "duration": { "type": "number", "minimum": 0 },
         "hold": { "type": "number", "minimum": 0 },
-        "timeout": { "type": "number", "minimum": 0 },
+        "timeout": { "type": "number", "minimum": 0, "maximum": 600000 },
+        "until": {
+          "description": "wait: hold until the text appears (in the target, or anywhere without one) or the target is gone",
+          "oneOf": [
+            { "type": "object", "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 500 } }, "required": ["text"], "additionalProperties": false },
+            { "type": "object", "properties": { "gone": { "const": true } }, "required": ["gone"], "additionalProperties": false }
+          ]
+        },
+        "checkpoint": { "type": "boolean", "description": "Perform mode: a safe step to resume from after the viewer takes over" },
         "page": { "type": "string", "pattern": "^/", "maxLength": 300, "description": "The page this step happens on; * matches one path segment. Applies to later steps until another names a page." },
         "text": { "type": "string", "maxLength": 2000 },
         "mask": { "type": "boolean" },
@@ -78,7 +87,10 @@
         "by": { "$ref": "#/$defs/xy" }
       },
       "allOf": [
-        { "if": { "properties": { "type": { "enum": ["move", "click", "dblclick", "type", "hover", "wait"] } } }, "then": { "required": ["target"] } },
+        { "if": { "properties": { "type": { "enum": ["move", "click", "dblclick", "type", "hover"] } } }, "then": { "required": ["target"] } },
+        { "if": { "properties": { "type": { "const": "wait" } } }, "then": { "anyOf": [{ "required": ["target"] }, { "required": ["until"], "properties": { "until": { "required": ["text"] } } }] } },
+        { "if": { "properties": { "type": { "not": { "const": "wait" } } } }, "then": { "not": { "required": ["until"] } } },
+        { "if": { "required": ["until"], "properties": { "until": { "required": ["gone"] } } }, "then": { "required": ["target"] } },
         { "if": { "properties": { "type": { "const": "type" } } }, "then": { "required": ["text"] } },
         { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["keys"] } },
         { "if": { "properties": { "type": { "const": "note" } } }, "then": { "required": ["say"], "properties": { "say": { "minLength": 1 } } } },

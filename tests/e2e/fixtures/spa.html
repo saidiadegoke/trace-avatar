@@ -23,7 +23,7 @@
         <a class="card" href="/app/tasks/bfd02a18-6a91-4a98-93fa-01e7d7db373d"><div><span id="status">Queued</span></div>
           <div><p>This is a test task</p><span>just now</span></div><div>2%</div></a>`,
       '/app/tasks/new': () => `<h1>New task</h1><div contenteditable="true" aria-label="Objective" role="textbox"></div>
-        <p style="margin-top:900px"><button type="button">Start task</button></p>`,
+        <p style="margin-top:900px"><button type="button" id="start">Start task</button></p>`,
     };
     function show(path) { document.getElementById('view').innerHTML = (views[path] || views['/app'])(); }
     // Client-side navigation, like a Next.js router: the address changes, the page never reloads.
@@ -33,6 +33,13 @@
       if (!a) return;
       e.preventDefault();
       go(a.getAttribute('href'));
+    });
+    // Starting a task goes back to the overview, where its status moves on a moment later.
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#start')) return;
+      window.objective = document.querySelector('[aria-label=Objective]').textContent;
+      go('/app');
+      setTimeout(() => { document.getElementById('status').textContent = 'Running'; }, 800);
     });
     history.replaceState({}, '', '/app');
     show('/app');

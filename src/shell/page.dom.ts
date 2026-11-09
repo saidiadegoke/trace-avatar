@@ -124,11 +124,37 @@ export interface PageOptions {
   win?: Window;
 }
 
+/** How often a `wait … until` is checked at most (ms): text across a page is too costly per frame. */
+export const UNTIL_MS = 250;
+
 export function createPage(opts: PageOptions = {}): PagePort {
   const win = opts.win ?? window;
   const root: ParentNode = opts.root ?? win.document;
   const chain: Locator[] = [...(opts.locators ?? []), ...DEFAULT_LOCATORS];
   const cache = new Map<number, { ref: WeakRef<Element>; by: ResolvedBy }>();
+  // `until` answers, rechecked only when the page changed and UNTIL_MS has passed.
+  const untilMemo = new Map<number, { met: boolean; at: number; seen: number }>();
+  /** Bumped by every page change the observer sees; each answer remembers the version it saw. */
+  let version = 0;
+  let observer: MutationObserver | null = null;
+  const watch = () => {
+    const MO = (win as Window & typeof globalThis).MutationObserver;
+    if (observer || typeof MO !== 'function') return;
+    const mo = new MO(() => { version += 1; });
+    mo.observe(root as Node, { subtree: true, childList: true, characterData: true, attributes: true });
+    observer = mo;
+  };
+
+  /** Whether step's until holds right now (no memo). */
+  function untilNow(step: NStep): boolean {
+    const u = step.until;
+    if (!u) return true;
+    if (u.gone) return !resolve(step);
+    const want = norm(u.text);
+    if (!step.target) return !!byText({ text: u.text }, root, step);
+    const found = resolve(step);
+    return !!found && norm(found.el.textContent).includes(want);
+  }
 
   function resolve(step: NStep): { el: Element; by: ResolvedBy } | null {
     const t = step.target as Target;
@@ -150,7 +176,20 @@ export function createPage(opts: PageOptions = {}): PagePort {
   return {
     viewport: () => ({ w: win.innerWidth, h: win.innerHeight }),
     element: (i) => cache.get(i)?.ref.deref() ?? null,
-    clear: () => cache.clear(),
+    until(trace, now) {
+      watch();
+      return (i) => {
+        const step = trace.steps[i];
+        if (!step?.until) return true;
+        const memo = untilMemo.get(i);
+        // Recheck when first asked, or when UNTIL_MS has passed and the page changed (or can't be watched).
+        if (memo && !(now - memo.at >= UNTIL_MS && (memo.seen !== version || !observer))) return memo.met;
+        const met = untilNow(step);
+        untilMemo.set(i, { met, at: now, seen: version });
+        return met;
+      };
+    },
+    clear: () => { cache.clear(); untilMemo.clear(); observer?.disconnect(); observer = null; },
     looker(trace: NormalisedTrace, vp: Viewport): LookFn {
       const memo = new Map<number, Look | null>();
       const rec = trace.meta.viewport;

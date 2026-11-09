@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { formatKeys, initial, pointOf, update, view } from '../../src/core/player';
-import type { Look } from '../../src/core/player';
+import { formatKeys, initial, nextCheckpoint, pointOf, update, view } from '../../src/core/player';
+import type { Effect, Look } from '../../src/core/player';
 import { CFG, Sim, box, trace } from './harness';
 
 const A = box(100, 100);       // centre 150,120
@@ -710,5 +710,169 @@ describe('pages', () => {
     sim.until(99_999);
     expect(sim.fx.filter((f) => f.fx === 'page')).toEqual([]);
     expect(sim.fx.filter((f) => f.fx === 'step').map((f) => (f as { i: number }).i)).toEqual([0, 2]);
+  });
+});
+
+describe('wait … until (0.1.2)', () => {
+  const tr = () => trace({ steps: [
+    { type: 'click', target: { sel: '#a' }, t: 500 },
+    { type: 'wait', target: { sel: '#s' }, until: { text: 'Running' }, timeout: 3000 },
+    { type: 'click', target: { sel: '#b' } },
+  ] });
+
+  it('holds until the condition is met, with a caption, then carries on', () => {
+    const sim = new Sim(tr(), { 0: A, 1: null, 2: B });
+    sim.mets = { 1: false };
+    sim.play();
+    sim.until(5000);
+    expect(sim.s).toMatchObject({ phase: 'waiting', for: 'until', i: 1 });
+    expect(sim.view.caption?.text).toBe('Waiting for “Running”…');
+    sim.run(1000);
+    expect(sim.s.phase).toBe('waiting');
+    sim.mets = { 1: true };
+    sim.run(50);
+    sim.until(99_999);
+    expect(sim.fx.filter((f) => f.fx === 'step').map((f) => (f as { i: number }).i)).toEqual([0, 1, 2]);
+    expect(sim.kinds()).not.toContain('stalled');
+  });
+
+  it("a `gone` wait doesn't need its element to exist; times out as until-timeout and carries on", () => {
+    const t2 = trace({ steps: [{ type: 'wait', target: { sel: '.spin' }, until: { gone: true }, timeout: 1000, say: 'Almost there.' }, { type: 'click', target: { sel: '#b' } }] });
+    const sim = new Sim(t2, { 0: null, 1: B });
+    sim.mets = { 0: false };
+    sim.play();
+    sim.run(200);
+    expect(sim.s).toMatchObject({ phase: 'waiting', for: 'until' });
+    expect(sim.view.caption?.text).toBe('Almost there.');
+    sim.run(1000);
+    expect(sim.fx).toContainEqual({ fx: 'stalled', i: 0, reason: 'until-timeout' });
+    sim.until(99_999);
+    expect(sim.s.phase).toBe('ended');
+    const u = trace({ steps: [{ type: 'click', target: { sel: '#a' } }, { type: 'wait', target: { sel: '.spin' }, until: { gone: true } }] });
+    const v = new Sim(u, { 0: A });
+    v.mets = { 1: false };
+    v.play();
+    v.until(99_999);
+    expect(v.view.caption?.text).toBe('Waiting for “.spin” to go away…');
+  });
+
+  it('without a met query, every until counts as met', () => {
+    const sim = new Sim(tr(), { 0: A, 1: null, 2: B }).play();
+    sim.until(99_999);
+    expect(sim.s.phase).toBe('ended');
+  });
+});
+
+describe('perform mode (0.1.2)', () => {
+  const P = { ...CFG, perform: true };
+  const acts = (fx: Effect[]) => fx.filter((f) => f.fx === 'act' || f.fx === 'handoff');
+
+  it('acts out click, dblclick, type, key and hover, aiming at the element; not move, note, wait or scroll', () => {
+    const t = trace({ steps: [
+      { type: 'click', target: { sel: '#a' } }, { type: 'dblclick', target: { sel: '#a' } }, { type: 'type', target: { sel: '#a' }, text: 'hi' },
+      { type: 'key', keys: 'Enter' }, { type: 'hover', target: { sel: '#a' } }, { type: 'move', target: { sel: '#a' } },
+      { type: 'note', say: 'x' }, { type: 'wait', target: { sel: '#a' } }, { type: 'scroll', by: { y: 10 } },
+    ] });
+    const all: Record<number, Look> = {};
+    for (let k = 0; k < 9; k += 1) all[k] = A;
+    const sim = new Sim(t, all, P).play();
+    sim.until(99_999);
+    expect(acts(sim.fx)).toEqual([
+      { fx: 'act', i: 0, x: 150, y: 120 }, { fx: 'act', i: 1, x: 150, y: 120 }, { fx: 'act', i: 2, x: 150, y: 120 },
+      { fx: 'act', i: 3 }, { fx: 'act', i: 4, x: 150, y: 120 },
+    ]);
+    expect(sim.fx).toContainEqual({ fx: 'scroll', i: 8 });
+    const overlay = new Sim(t, all).play();
+    overlay.until(99_999);
+    expect(acts(overlay.fx)).toEqual([]);
+  });
+
+  it('hands a masked field to the viewer, then carries on from the next step', () => {
+    const t = trace({ steps: [
+      { type: 'type', target: { sel: '#pw' }, text: '••••', mask: true }, { type: 'click', target: { sel: '#b' } },
+    ] });
+    const sim = new Sim(t, { 0: A, 1: B }, P).play();
+    sim.until(99_999);
+    expect(sim.s).toMatchObject({ phase: 'paused', why: 'handoff', i: 0 });
+    expect(acts(sim.fx)).toEqual([{ fx: 'handoff', i: 0 }]);
+    expect(sim.view.caption?.text).toBe('Your turn: type in “#pw”, then press play.');
+    sim.run(5000);
+    expect(sim.s.phase).toBe('paused');
+    sim.send({ kind: 'play' });
+    expect(sim.s).toMatchObject({ phase: 'playing', i: 1 });
+    sim.until(99_999);
+    expect(acts(sim.fx)).toEqual([{ fx: 'handoff', i: 0 }, { fx: 'act', i: 1, x: 650, y: 420 }]);
+  });
+
+  it('a hand-off on the last step ends the guide when the viewer presses play', () => {
+    const t = trace({ steps: [{ type: 'type', target: { sel: '#pw' }, text: '•', mask: true }] });
+    const sim = new Sim(t, { 0: A }, P).play();
+    sim.until(99_999);
+    const fx = sim.send({ kind: 'play' });
+    expect(sim.s.phase).toBe('ended');
+    expect(fx).toEqual([{ fx: 'end' }]);
+  });
+
+  it('after a takeover, resumes from the next checkpoint ahead (overlay mode just carries on)', () => {
+    const t = trace({ steps: [
+      { type: 'click', target: { sel: '#a' } }, { type: 'click', target: { sel: '#b' } },
+      { type: 'click', target: { sel: '#a' }, checkpoint: true }, { type: 'click', target: { sel: '#b' } },
+    ] });
+    const looks = { 0: A, 1: B, 2: A, 3: B };
+    const sim = new Sim(t, looks, P).play();
+    sim.until(900);
+    sim.send({ kind: 'takeover' });
+    sim.send({ kind: 'play' });
+    expect(sim.s.i).toBe(2);
+    const ov = new Sim(t, looks).play();
+    ov.until(900);
+    ov.send({ kind: 'takeover' });
+    ov.send({ kind: 'play' });
+    expect(ov.s.i).toBe(0);
+    // No checkpoint ahead: carry on where it was.
+    const none = new Sim(trace({ steps: [{ type: 'click', target: { sel: '#a' } }, { type: 'click', target: { sel: '#b' } }] }), { 0: A, 1: B }, P).play();
+    none.until(900);
+    none.send({ kind: 'takeover' });
+    none.send({ kind: 'play' });
+    expect(none.s.i).toBe(0);
+  });
+
+  it('never goes back: prev and backward seeks are ignored, forward seeks and seek(0) work, and it does not loop', () => {
+    const sim = new Sim(twoClicks(), { 0: A, 1: B }, { ...P, loop: true }).play();
+    sim.until(1500);
+    const at = sim.t;
+    sim.send({ kind: 'prev' });
+    sim.send({ kind: 'seek', t: 200 });
+    expect(sim.t).toBe(at);
+    sim.send({ kind: 'seek', t: at + 100 });
+    expect(sim.t).toBe(at + 100);
+    sim.send({ kind: 'seek', t: 0 });
+    expect(sim.t).toBe(0);
+    sim.until(99_999);
+    expect(sim.s.phase).toBe('ended');
+  });
+
+  it('nextCheckpoint finds the first not-yet-done checkpoint at or after i', () => {
+    const t = trace({ steps: [{ type: 'note', say: 'a', checkpoint: true }, { type: 'note', say: 'b' }, { type: 'note', say: 'c', checkpoint: true }] });
+    expect([nextCheckpoint(t, 0, -1), nextCheckpoint(t, 0, 0), nextCheckpoint(t, 1, 0), nextCheckpoint(t, 2, 2)]).toEqual([0, 2, 2, -1]);
+  });
+});
+
+describe('jump (resume)', () => {
+  it('from idle lands paused on step j with j still to play; play goes on from there', () => {
+    const sim = new Sim(twoClicks(), { 0: A, 1: B });
+    sim.send({ kind: 'jump', i: 1 });
+    expect(sim.s).toMatchObject({ phase: 'paused', i: 1, fired: 0 });
+    sim.send({ kind: 'play' });
+    sim.until(99_999);
+    expect(sim.fx.filter((f) => f.fx === 'step')).toEqual([{ fx: 'step', i: 1, by: 'sel' }]);
+    const clamp = new Sim(twoClicks(), { 0: A, 1: B });
+    clamp.send({ kind: 'jump', i: 99 });
+    expect(clamp.s.i).toBe(1);
+    clamp.send({ kind: 'jump', i: -3 });
+    expect(clamp.s.i).toBe(0);
+    const playing = new Sim(twoClicks(), { 0: A, 1: B }).play();
+    playing.send({ kind: 'jump', i: 1 });
+    expect(playing.s).toMatchObject({ phase: 'playing', i: 1 });
   });
 });

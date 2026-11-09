@@ -12,6 +12,10 @@
     label { display: grid; gap: 4px; font-weight: 600; }
     input { font: inherit; padding: 10px 12px; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); border-radius: 8px; background: Canvas; color: CanvasText; }
     button { font: inherit; padding: 10px 16px; border-radius: 8px; border: 0; background: #2456d8; color: #fff; cursor: pointer; }
+    .modes { position: fixed; left: 16px; bottom: 16px; display: flex; gap: 6px; padding: 6px; border-radius: 10px; background: Canvas; border: 1px solid color-mix(in srgb, CanvasText 15%, transparent); z-index: 10; }
+    .modes button { padding: 6px 12px; background: transparent; color: CanvasText; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); }
+    .modes button[aria-pressed=true] { background: #2456d8; color: #fff; border-color: #2456d8; }
+    #sent { min-height: 1.5em; color: #1b7f3b; font-weight: 600; }
     .total { display: flex; justify-content: space-between; font-size: 18px; padding: 12px 0; border-top: 1px solid color-mix(in srgb, CanvasText 15%, transparent); }
   </style>
 </head>
@@ -25,15 +29,34 @@
     <label>Amount (₦) <input id="amount" inputmode="numeric"></label>
     <div class="total"><span>Total</span><span id="total">₦0</span></div>
     <button id="send">Send invoice</button>
+    <p id="sent" role="status"></p>
   </main>
+  <!-- Two modes, one trace: "Show me" draws over the page; "Do it for me" really fills the form and sends it. -->
+  <div class="modes" data-trace-ignore role="group" aria-label="Guide mode">
+    <button id="show" aria-pressed="true">Show me</button>
+    <button id="do" aria-pressed="false">Do it for me</button>
+  </div>
   <script>
     const amount = document.getElementById('amount');
+    const customer = document.getElementById('customer');
+    document.getElementById('send').addEventListener('click', () => {
+      document.getElementById('sent').textContent = customer.value ? `Sent to ${customer.value} for ${document.getElementById('total').textContent}.` : 'Add a customer first.';
+    });
     amount.addEventListener('input', () => { document.getElementById('total').textContent = '₦' + (Number(amount.value.replace(/[^\d.]/g, '')) || 0).toLocaleString(); });
   </script>
-  <!-- From a CDN: https://cdn.jsdelivr.net/npm/trace-avatar/dist/trace.min.js -->
-  <script src="../../dist/trace.min.js"></script>
+  <!-- From a CDN: https://cdn.jsdelivr.net/npm/trace-avatar/dist/trace-perform.min.js (both modes).
+       Showing only? dist/trace.min.js is smaller and never touches the page. -->
+  <script src="../../dist/trace-perform.min.js"></script>
   <script>
-    TraceAvatar.createTrace({ trace: './demo.trace.json', controls: true, autoplay: true });
+    function start(mode) {
+      window.guide?.destroy();
+      for (const b of document.querySelectorAll('.modes button')) b.setAttribute('aria-pressed', String(b.id === (mode === 'perform' ? 'do' : 'show')));
+      if (mode === 'perform') { customer.value = ''; amount.value = ''; amount.dispatchEvent(new Event('input')); document.getElementById('sent').textContent = ''; }
+      window.guide = TraceAvatar.createTrace({ trace: './demo.trace.json', controls: true, autoplay: true, mode });
+    }
+    document.getElementById('show').addEventListener('click', () => start('overlay'));
+    document.getElementById('do').addEventListener('click', () => start('perform'));
+    start(new URLSearchParams(location.search).get('mode') === 'perform' ? 'perform' : 'overlay');
   </script>
 </body>
 </html>

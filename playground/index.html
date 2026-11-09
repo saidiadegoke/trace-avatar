@@ -21,6 +21,8 @@
     aside h1 { font-size: 16px; margin: 0; }
     textarea { width: 100%; min-height: 280px; font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: Canvas; color: CanvasText; resize: vertical; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    #sent { min-height: 1.5em; color: #1b7f3b; font-weight: 600; margin: 0; }
+    select { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: Canvas; color: CanvasText; }
     #status { font-size: 13px; min-height: 1.5em; white-space: pre-wrap; }
     #status.err { color: #c62828; }
   </style>
@@ -36,12 +38,17 @@
       <label>Amount (₦) <input id="amount" inputmode="numeric"></label>
       <div class="total"><span>Total</span><span id="total">₦0</span></div>
       <button id="send">Send invoice</button>
+      <p id="sent" role="status"></p>
     </main>
   </div>
   <aside data-trace-ignore>
     <h1>trace-avatar playground</h1>
     <textarea id="json" spellcheck="false" aria-label="Trace JSON"></textarea>
     <div class="row">
+      <select id="mode" aria-label="Mode" title="Show me draws over the page; Do it for me clicks and types for real">
+        <option value="overlay">Show me</option>
+        <option value="perform">Do it for me</option>
+      </select>
       <button id="play">Play</button>
       <button id="check" class="ghost">Check</button>
       <button id="reset" class="ghost">Reset sample</button>
@@ -52,9 +59,17 @@
   </aside>
   <script>
     const amount = document.getElementById('amount');
+    const customer = document.getElementById('customer');
+    const sent = document.getElementById('sent');
+    document.getElementById('send').addEventListener('click', () => {
+      sent.textContent = customer.value ? `Sent to ${customer.value} for ${document.getElementById('total').textContent}.` : 'Add a customer first.';
+    });
+    // Before a "Do it for me" run: an empty form, as a fresh sandbox would be.
+    window.clearForm = () => { customer.value = ''; amount.value = ''; amount.dispatchEvent(new Event('input')); sent.textContent = ''; };
     amount.addEventListener('input', () => { document.getElementById('total').textContent = '₦' + (Number(amount.value.replace(/[^\d.]/g, '')) || 0).toLocaleString(); });
   </script>
-  <script src="../dist/trace.min.js"></script>
+  <!-- trace-perform.min.js plays both modes (trace.min.js is the smaller, show-only build). -->
+  <script src="../dist/trace-perform.min.js"></script>
   <script src="../dist/trace-record.min.js"></script>
   <script>
     const box = document.getElementById('json');
@@ -84,7 +99,10 @@
       if (!raw) return;
       current?.destroy();
       window.pg.steps = [];
-      current = TraceAvatar.createTrace({ trace: raw, controls: true, autoplay: true });
+      const mode = document.getElementById('mode').value;
+      if (mode === 'perform') window.clearForm();
+      current = TraceAvatar.createTrace({ trace: raw, controls: true, autoplay: true, mode, onReset: window.clearForm });
+      current.on('handoff', (e) => say(`Step ${e.index + 1}: your turn. Type in the highlighted field (it was masked when recorded), then press play.`));
       current.on('step', (e) => { window.pg.steps.push(e.index); say(`Step ${e.index + 1} of ${current.trace.steps.length} (${e.step.type}${e.resolvedBy ? `, found by ${e.resolvedBy}` : ''})`); });
       current.on('stalled', (e) => say(`Step ${e.index + 1}: element not found (${e.reason}).`, true));
       current.on('end', () => say('Finished.'));

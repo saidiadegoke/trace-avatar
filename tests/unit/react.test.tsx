@@ -125,6 +125,47 @@ describe('useTrace / <TraceAvatar>', () => {
     expect(first).toHaveBeenCalledTimes(1);
   });
 
+  it('prepare, onReset and currentPath are read from the latest render; onHandoff and onBlocked are wired', async () => {
+    let now = 0;
+    const cbs: Array<() => void> = [];
+    const clock = { now: () => now, raf: (cb: () => void) => { cbs.push(cb); return cbs.length; }, caf: () => {} };
+    const tick = (n: number) => { for (let k = 0; k < n; k += 1) { now += 16; cbs.splice(0).forEach((cb) => cb()); } };
+    const out = { ctl: null as TraceController | null };
+    const masked: Trace = { version: 1, steps: [{ type: 'type', target: { sel: '#a' }, text: '•', mask: true, t: 50, page: '/p' }] };
+    const performer = () => ({ click() {}, hover() {}, key() {}, startTyping: (x: Element) => x, typeTo() {}, finishTyping() {}, focus() {} });
+    const no = vi.fn(() => false);
+    const yes = vi.fn(() => true);
+    const reset1 = vi.fn();
+    const reset2 = vi.fn();
+    const onBlocked = vi.fn();
+    const onHandoff = vi.fn();
+    const path1 = () => '/elsewhere';
+    const path2 = () => '/p';
+    const props = { trace: masked, out, mode: 'perform' as const, performer, onBlocked, onHandoff, ports: { clock } };
+    act(() => root.render(<Probe {...props} prepare={no} onReset={reset1} currentPath={path1} />));
+    await act(async () => { out.ctl!.play(); await Promise.resolve(); await Promise.resolve(); });
+    await vi.waitFor(() => expect(onBlocked).toHaveBeenCalled());
+    act(() => root.render(<Probe {...props} prepare={yes} onReset={reset2} currentPath={path2} />));
+    await act(async () => { out.ctl!.play(); });
+    await vi.waitFor(() => expect(out.ctl!.state).toBe('playing'));
+    act(() => { tick(60); });
+    expect(onHandoff).toHaveBeenCalled();
+    expect([no.mock.calls.length, yes.mock.calls.length]).toEqual([1, 1]);
+    await act(async () => { out.ctl!.stop(); out.ctl!.play(); });
+    await vi.waitFor(() => expect(reset2).toHaveBeenCalled());
+    expect(reset1).not.toHaveBeenCalled();
+    // A render without prepare / currentPath falls back (true; location.pathname).
+    act(() => root.render(<Probe {...props} prepare={undefined} currentPath={undefined} onReset={undefined} />));
+  });
+
+  it('a prepare removed on a later render lets the guide start', async () => {
+    const out = { ctl: null as TraceController | null };
+    act(() => root.render(<Probe trace={TRACE} out={out} prepare={() => false} />));
+    act(() => root.render(<Probe trace={TRACE} out={out} />));
+    await act(async () => { out.ctl!.play(); });
+    await vi.waitFor(() => expect(out.ctl!.state).toBe('playing'));
+  });
+
   it('enabled={false} creates nothing', () => {
     const out = { ctl: null as TraceController | null };
     act(() => root.render(<Probe trace={TRACE} out={out} enabled={false} />));

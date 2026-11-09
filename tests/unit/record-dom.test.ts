@@ -385,3 +385,18 @@ describe('pages', () => {
     expect(rec.stop()!.steps.map((s) => s.page)).toEqual(['/app', '/app/tasks/*', undefined]);
   });
 });
+
+describe('recorder: requires', () => {
+  it('copies requires into meta (and leaves it out when empty)', () => {
+    html('<button id="go">Go</button>');
+    let now = 0;
+    const rec = createRecorder({ allowSynthetic: true, now: () => now, requires: ['signed-in'] });
+    rec.start();
+    now = 10; $('#go').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(rec.stop()!.meta?.requires).toEqual(['signed-in']);
+    const none = createRecorder({ allowSynthetic: true, now: () => now, requires: [] });
+    none.start();
+    now = 20; $('#go').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(none.stop()!.meta).not.toHaveProperty('requires');
+  });
+});

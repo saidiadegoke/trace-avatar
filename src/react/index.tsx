@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createTrace } from '../index';
-import type { PageEvent, StalledEvent, StepEvent, TraceController, TraceOptions } from '../index';
+import type { BlockedEvent, HandoffEvent, PageEvent, StalledEvent, StepEvent, TraceController, TraceOptions } from '../index';
 import type { Phase } from '../core/player';
 
 export interface TraceHandlers {
@@ -14,6 +14,10 @@ export interface TraceHandlers {
   onStalled?: (e: StalledEvent) => void;
   /** The next step is on another page (see `navigate`). */
   onPage?: (e: PageEvent) => void;
+  /** Perform mode reached a masked field: the viewer types it. */
+  onHandoff?: (e: HandoffEvent) => void;
+  /** `prepare` said no: the guide did not start. */
+  onBlocked?: (e: BlockedEvent) => void;
   onEnd?: () => void;
   onState?: (phase: Phase) => void;
   onError?: (e: Error) => void;
@@ -25,6 +29,7 @@ export type UseTraceOptions = TraceOptions & TraceHandlers & { enabled?: boolean
 export function optionsKey(o: UseTraceOptions): string {
   return JSON.stringify([
     o.trace, o.avatar, o.controls, o.autoplay, o.loop, o.captions, o.takeover, o.keyboard, o.seed, o.reducedMotion, o.enabled ?? true,
+    o.mode ?? 'overlay', o.resumeKey ?? null,
   ]);
 }
 
@@ -38,8 +43,15 @@ export function useTrace(opts: UseTraceOptions): TraceController | null {
     if (opts.enabled === false) { setCtl(null); return undefined; }
     let c: TraceController;
     try {
-      // Read navigate from the latest render, so a new router function needs no rebuild.
-      c = createTrace({ ...opts, navigate: opts.navigate ? (path) => handlers.current.navigate?.(path) : undefined });
+      // Functions are read from the latest render, so a new closure needs no rebuild.
+      const h = handlers;
+      c = createTrace({
+        ...opts,
+        navigate: opts.navigate ? (path) => h.current.navigate?.(path) : undefined,
+        prepare: opts.prepare ? (requires, trace) => h.current.prepare ? h.current.prepare(requires, trace) : true : undefined,
+        onReset: opts.onReset ? () => h.current.onReset?.() : undefined,
+        currentPath: opts.currentPath ? () => (h.current.currentPath ?? (() => window.location.pathname))() : undefined,
+      });
     } catch (err) {
       handlers.current.onError?.(err as Error);
       setCtl(null);
@@ -49,6 +61,8 @@ export function useTrace(opts: UseTraceOptions): TraceController | null {
       c.on('step', (e) => handlers.current.onStep?.(e)),
       c.on('stalled', (e) => handlers.current.onStalled?.(e)),
       c.on('page', (e) => handlers.current.onPage?.(e)),
+      c.on('handoff', (e) => handlers.current.onHandoff?.(e)),
+      c.on('blocked', (e) => handlers.current.onBlocked?.(e)),
       c.on('end', () => handlers.current.onEnd?.()),
       c.on('state', (e) => handlers.current.onState?.(e.phase)),
       c.on('error', (e) => handlers.current.onError?.(e)),

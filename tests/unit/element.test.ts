@@ -105,4 +105,35 @@ describe('<trace-avatar>', () => {
     expect(err).toHaveBeenCalled();
     expect(el.controller).toBeNull();
   });
+
+  it('mode="perform", resume-key and .hooks reach the controller; trace-handoff and trace-blocked are dispatched', async () => {
+    html('<input id="pw" type="password">');
+    const el = make();
+    el.trace = { version: 1, steps: [{ type: 'type', target: { sel: '#pw' }, text: '•', mask: true, t: 10 }] };
+    el.setAttribute('mode', 'perform');
+    el.setAttribute('resume-key', 'tour');
+    const prepare = vi.fn(() => true);
+    const performer = vi.fn(() => ({ click() {}, hover() {}, key() {}, startTyping: (x: Element) => x, typeTo() {}, finishTyping() {}, focus() {} }));
+    el.hooks = { prepare, performer };
+    expect(el.hooks).toEqual({ prepare, performer });
+    expect(el.options()).toMatchObject({ mode: 'perform', resumeKey: 'tour', prepare, performer });
+    document.body.appendChild(el);
+    const handoff = vi.fn();
+    el.addEventListener('trace-handoff', handoff);
+    el.play();
+    await vi.waitFor(() => expect(handoff).toHaveBeenCalled());
+    expect(performer).toHaveBeenCalled();
+
+    const b = make();
+    b.trace = TRACE;
+    b.hooks = { prepare: () => false };
+    document.body.appendChild(b);
+    const blocked = vi.fn();
+    b.addEventListener('trace-blocked', blocked);
+    b.play();
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalled());
+    b.setAttribute('mode', 'overlay');
+    expect(b.options()!.mode).toBeUndefined();
+  });
 });
+

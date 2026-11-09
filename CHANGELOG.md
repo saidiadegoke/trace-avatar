@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.2
+
+Guides that do the work, and wait for the app to catch up.
+
+- Perform mode (`mode: 'perform'`, from `trace-avatar/perform`; CDN `trace-perform.min.js`): the guide clicks, types,
+  presses keys and hovers on the real page. Values go through the native setter plus `input`, so React, Vue and Svelte
+  controlled inputs see them; selects pick their option by text; rich-text boxes get `insertText`; Enter in a form
+  field submits it. Its own events are never taken for a viewer takeover. Meant for sandbox and demo data.
+- Masked fields are handed over: the guide stops ("Your turn: type in “Password”, then press play"), focuses the field
+  and emits `handoff`; play carries on from the next step.
+- `wait` steps take `until: { text }` (the element, or the page, shows that text) or `until: { gone: true }` (the
+  element went away), checked at most every 250 ms and only when the page changed. A `wait` with `until.text` needs no
+  target. `timeout` is capped at 10 minutes.
+- `checkpoint: true` on a step: after a takeover in perform mode, play resumes from the next checkpoint. Perform mode
+  never seeks back; a restart starts over.
+- `prepare(requires, trace)` runs before a guide starts and may block it with a message (`blocked` event; caption
+  shown even without a cursor). `meta.requires` (e.g. `['signed-in']`); the recorder's `requires` option fills it in.
+- `onReset()` puts the app back before a perform-mode restart.
+- `resumeKey`: carry on across full page loads (sessionStorage, 10 minutes).
+- Custom element: `mode` and `resume-key` attributes, a `hooks` property, `trace-handoff` / `trace-blocked` events.
+  React: `onHandoff`, `onBlocked`, and `navigate` / `prepare` / `onReset` / `currentPath` that always call the latest
+  render's function.
+- Examples and docs cover both modes: the vanilla example and the playground switch between Show me and Do it for me
+  (they load `trace-perform.min.js`, which plays both); the React example adds `DoItForMe` and `ShowOrDo`; the
+  README leads with the two modes. Every example runs in the browser tests, in both modes.
+- Size budgets: player, React and CDN 12.5 KB → 14 KB (`until`, prepare, resume, handoff); perform entry 15.5 KB.
+
 ## 0.1.1
 
 Found by recording a real Next.js app (DutyCaptain).

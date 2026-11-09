@@ -313,3 +313,68 @@ describe('browserClock', () => {
     expect(fired2).toHaveBeenCalled();
   });
 });
+
+describe('until (0.1.2)', () => {
+  const tr = () => {
+    const r = parse({ version: 1, steps: [
+      { type: 'wait', target: { sel: '#status' }, until: { text: 'Running' } },
+      { type: 'wait', until: { text: 'Task started' } },
+      { type: 'wait', target: { sel: '.spin' }, until: { gone: true } },
+      { type: 'note', say: 'x' },
+    ] });
+    if (!r.ok) throw new Error('bad');
+    return r.trace;
+  };
+  const flush = () => new Promise((r) => setTimeout(r, 0)); // let the MutationObserver report
+
+  it('text in the target, text anywhere (visible only), gone; steps without until are always met', async () => {
+    html('<span id="status">Queued</span><div class="spin">…</div><p id="off">Task started</p>');
+    setRect(document.getElementById('off')!, 0, 0, 0, 0); // not visible: doesn't count
+    const page = createPage();
+    const t = tr();
+    let met = page.until!(t, 0);
+    expect([met(0), met(1), met(2), met(3), met(99)]).toEqual([false, false, false, true, true]);
+    document.getElementById('status')!.textContent = 'Running now';
+    const toast = document.createElement('p');
+    toast.textContent = 'Task  STARTED';
+    document.body.appendChild(toast);
+    setRect(toast, 0, 0);
+    document.querySelector('.spin')!.remove();
+    await flush();
+    met = page.until!(t, 300);
+    expect([met(0), met(1), met(2)]).toEqual([true, true, true]);
+  });
+
+  it('is checked at most every 250 ms, and only again once the page changed', async () => {
+    html('<span id="status">Queued</span>');
+    const page = createPage();
+    const t = tr();
+    expect(page.until!(t, 0)(0)).toBe(false);
+    document.getElementById('status')!.textContent = 'Running';
+    await flush();
+    expect(page.until!(t, 100)(0)).toBe(false); // too soon: the remembered answer
+    expect(page.until!(t, 260)(0)).toBe(true);
+    // Unchanged page: no recheck, even much later (the answer can't have changed).
+    const spy = vi.spyOn(document, 'querySelectorAll');
+    page.until!(t, 5000)(0);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('without MutationObserver it rechecks every 250 ms; clear() forgets and stops watching', async () => {
+    html('<span id="status">Queued</span>');
+    const win = Object.create(window, { MutationObserver: { value: undefined } }) as Window;
+    Object.defineProperty(win, 'document', { value: document });
+    const page = createPage({ win, root: document });
+    const t = tr();
+    expect(page.until!(t, 0)(0)).toBe(false);
+    document.getElementById('status')!.textContent = 'Running';
+    expect(page.until!(t, 300)(0)).toBe(true);
+
+    const watched = createPage();
+    expect(watched.until!(t, 0)(0)).toBe(true);
+    watched.clear();
+    document.getElementById('status')!.textContent = 'Queued';
+    expect(watched.until!(t, 10)(0)).toBe(false); // forgotten: asked afresh
+  });
+});

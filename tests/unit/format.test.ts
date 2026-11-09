@@ -301,3 +301,41 @@ describe('pages', () => {
     expect(r.ok && r.trace.steps.map((s) => s.page)).toEqual([null, '/app', '/app', '/app/tasks/*']);
   });
 });
+
+describe('until, checkpoint, requires (0.1.2)', () => {
+  const one = (step: Record<string, unknown>, meta?: Record<string, unknown>) => validate({ version: 1, ...(meta ? { meta } : {}), steps: [step] }).errors.map((e) => e.path);
+
+  it('accepts wait until text (with or without a target) or until gone (with a target)', () => {
+    expect(one({ type: 'wait', until: { text: 'Running' } })).toEqual([]);
+    expect(one({ type: 'wait', target: { sel: '#s' }, until: { text: 'Running' }, timeout: 120000 })).toEqual([]);
+    expect(one({ type: 'wait', target: { sel: '.spinner' }, until: { gone: true } })).toEqual([]);
+  });
+
+  it('rejects until anywhere else, or malformed', () => {
+    expect(one({ type: 'click', target: { sel: '#a' }, until: { text: 'x' } })).toEqual(['steps[0].until']);
+    expect(one({ type: 'wait', target: { sel: '#a' }, until: {} })).toEqual(['steps[0].until']);
+    expect(one({ type: 'wait', target: { sel: '#a' }, until: { text: 'x', gone: true } })).toEqual(['steps[0].until']);
+    expect(one({ type: 'wait', target: { sel: '#a' }, until: 'x' })).toEqual(['steps[0].until']);
+    expect(one({ type: 'wait', target: { sel: '#a' }, until: { text: '  ' } })).toEqual(['steps[0].until.text']);
+    expect(one({ type: 'wait', target: { sel: '#a' }, until: { text: 'x'.repeat(501) } })).toEqual(['steps[0].until.text']);
+    expect(one({ type: 'wait', target: { sel: '#a' }, until: { gone: false } })).toEqual(['steps[0].until.gone']);
+    expect(one({ type: 'wait', until: { gone: true } })).toEqual(['steps[0].target']);
+    expect(one({ type: 'wait' })).toEqual(['steps[0].target']);
+  });
+
+  it('caps timeouts at 10 minutes and checks checkpoint and requires', () => {
+    expect(one({ type: 'wait', until: { text: 'x' }, timeout: 600_001 })).toEqual(['steps[0].timeout']);
+    expect(one({ type: 'wait', until: { text: 'x' }, timeout: 600_000 })).toEqual([]);
+    expect(one({ type: 'note', say: 'x', checkpoint: 'yes' })).toEqual(['steps[0].checkpoint']);
+    expect(one({ type: 'note', say: 'x' }, { requires: ['signed-in', 'sandbox'] })).toEqual([]);
+    for (const requires of ['signed-in', [''], ['x'.repeat(61)], [1], Array(11).fill('a')]) expect(one({ type: 'note', say: 'x' }, { requires })).toEqual(['meta.requires']);
+  });
+
+  it('normalises until and checkpoint', () => {
+    const r = parse({ version: 1, meta: { requires: ['signed-in'] }, steps: [
+      { type: 'wait', until: { text: 'Running' } }, { type: 'wait', target: { sel: '#s' }, until: { gone: true } }, { type: 'note', say: 'x', checkpoint: true },
+    ] });
+    expect(r.ok && r.trace.steps.map((s) => [s.until, s.checkpoint])).toEqual([[{ text: 'Running' }, false], [{ gone: true }, false], [null, true]]);
+    expect(r.ok && r.trace.meta.requires).toEqual(['signed-in']);
+  });
+});

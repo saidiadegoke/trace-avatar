@@ -53,7 +53,14 @@ export interface Step {
    * for this step's element on a matching page; elsewhere it waits for the viewer (or navigates).
    */
   page?: string;
+  /** `wait`: hold until the target's text (or, without a target, the page's) contains `text`, or the target is `gone`. */
+  until?: Until;
+  /** Perform mode: a safe step to resume from after the viewer takes over. */
+  checkpoint?: boolean;
 }
+
+/** One condition, for a start: text appears, or the target goes away. */
+export type Until = { text: string; gone?: undefined } | { gone: true; text?: undefined };
 
 export interface Avatar { name?: string; image?: string; color?: string }
 
@@ -65,6 +72,11 @@ export interface Meta {
   seed?: number;
   pointer?: 'mouse' | 'touch';
   truncated?: boolean;
+  /**
+   * What the guide needs before it starts, as names the host defines ("signed-in", "sandbox").
+   * The library doesn't interpret them; the host's `prepare` hook checks them.
+   */
+  requires?: string[];
 }
 
 export interface Trace {
@@ -99,6 +111,8 @@ export interface NStep {
   readonly timeout: number;
   /** The page this step happens on (inherited from earlier steps), or null for any page. */
   readonly page: string | null;
+  readonly until: Until | null;
+  readonly checkpoint: boolean;
 }
 
 export interface NormalisedTrace {
@@ -119,7 +133,7 @@ export interface NormalisedTrace {
 export interface ValidationError { path: string; message: string }
 export type ParseResult = { ok: true; trace: NormalisedTrace } | { ok: false; errors: ValidationError[] };
 
-export const LIMITS = { steps: 10_000, pathSamples: 200_000, say: 500, text: 2_000, string: 1_000 } as const;
+export const LIMITS = { steps: 10_000, pathSamples: 200_000, say: 500, text: 2_000, string: 1_000, timeout: 600_000, requires: 10 } as const;
 
 /** Timing constants (ms). */
 export const TIMING = {
@@ -177,6 +191,8 @@ export function validate(raw: unknown): { ok: boolean; errors: ValidationError[]
       if (m.viewport !== undefined && !(isObj(m.viewport) && isNum(m.viewport.w) && isNum(m.viewport.h) && m.viewport.w > 0 && m.viewport.h > 0)) err('meta.viewport', 'must be { w, h } with positive numbers');
       if (m.seed !== undefined && !isNum(m.seed)) err('meta.seed', 'must be a number');
       if (m.pointer !== undefined && m.pointer !== 'mouse' && m.pointer !== 'touch') err('meta.pointer', 'must be "mouse" or "touch"');
+      if (m.requires !== undefined && !(Array.isArray(m.requires) && m.requires.length <= LIMITS.requires
+        && m.requires.every((r: unknown) => typeof r === 'string' && r.length > 0 && r.length <= 60))) err('meta.requires', `must be a list of at most ${LIMITS.requires} names (1–60 characters)`);
     }
   }
   if (raw.avatar !== undefined) {
@@ -197,7 +213,15 @@ export function validate(raw: unknown): { ok: boolean; errors: ValidationError[]
       if (!STEP_TYPES.includes(s.type)) { err(`${p}.type`, `must be one of ${STEP_TYPES.join(', ')}`); return; }
       if (s.t !== undefined && !(isNum(s.t) && s.t >= 0)) err(`${p}.t`, 'must be a number ≥ 0');
       for (const k of ['duration', 'hold', 'timeout'] as const) if (s[k] !== undefined && !(isNum(s[k]) && s[k] >= 0)) err(`${p}.${k}`, 'must be a number ≥ 0');
-      for (const k of ['highlight', 'pause', 'mask'] as const) if (s[k] !== undefined && typeof s[k] !== 'boolean') err(`${p}.${k}`, 'must be true or false');
+      if (isNum(s.timeout) && s.timeout > LIMITS.timeout) err(`${p}.timeout`, `must be at most ${LIMITS.timeout} (10 minutes)`);
+      for (const k of ['highlight', 'pause', 'mask', 'checkpoint'] as const) if (s[k] !== undefined && typeof s[k] !== 'boolean') err(`${p}.${k}`, 'must be true or false');
+      if (s.until !== undefined) {
+        const u = s.until;
+        if (s.type !== 'wait') err(`${p}.until`, 'only a wait step has until');
+        else if (!isObj(u) || (u.text === undefined) === (u.gone === undefined)) err(`${p}.until`, 'needs exactly one of text or gone');
+        else if (u.text !== undefined && !(typeof u.text === 'string' && u.text.trim() && u.text.length <= LIMITS.say)) err(`${p}.until.text`, `must be text (at most ${LIMITS.say} characters)`);
+        else if (u.gone !== undefined && u.gone !== true) err(`${p}.until.gone`, 'must be true');
+      }
       str(s.say, `${p}.say`, LIMITS.say);
       if (s.page !== undefined && !(typeof s.page === 'string' && s.page.startsWith('/') && s.page.length <= 300)) err(`${p}.page`, 'must be a path starting with "/" (at most 300 characters)');
       if (s.target !== undefined) {
@@ -210,7 +234,7 @@ export function validate(raw: unknown): { ok: boolean; errors: ValidationError[]
           if (!t.sel && !t.role && !t.text && !t.xy) err(`${p}.target`, 'needs at least one of sel, role, text or xy');
           if (t.name !== undefined && !t.role) err(`${p}.target.name`, 'is only used together with role');
         }
-      } else if (NEEDS_TARGET.has(s.type)) err(`${p}.target`, `a ${s.type} step needs a target`);
+      } else if (NEEDS_TARGET.has(s.type) && !(s.type === 'wait' && isObj(s.until) && typeof s.until.text === 'string')) err(`${p}.target`, `a ${s.type} step needs a target`);
       if (s.type === 'type') {
         if (typeof s.text !== 'string') err(`${p}.text`, 'a type step needs text');
         else str(s.text, `${p}.text`, LIMITS.text);
@@ -317,6 +341,8 @@ export function parse(raw: unknown): ParseResult {
       by: s.type === 'scroll' ? (s.by ?? null) : null,
       timeout: s.timeout ?? (s.type === 'wait' ? TIMING.waitTimeout : TIMING.timeout),
       page,
+      until: s.type === 'wait' && s.until ? (s.until.gone ? { gone: true } : { text: s.until.text! }) : null,
+      checkpoint: !!s.checkpoint,
     });
   });
 

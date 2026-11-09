@@ -19,7 +19,8 @@ import type { NStep, NormalisedTrace, Point } from './format';
 import { curvePoint, samplePath } from './motion';
 
 export type Phase = 'idle' | 'playing' | 'paused' | 'waiting' | 'ended';
-export type PauseReason = 'user' | 'takeover' | 'pause-step';
+/** 'handoff': perform mode reached a masked field; the viewer types it, then presses play. */
+export type PauseReason = 'user' | 'takeover' | 'pause-step' | 'handoff';
 export type ResolvedBy = 'sel' | 'role' | 'text' | 'xy';
 
 /** What the shell measured about a step's element this frame (viewport pixels). */
@@ -34,6 +35,11 @@ export interface Config {
   mac: boolean;
   /** When the viewer takes over, say how to resume (only useful when controls are shown). */
   resumeHint?: boolean;
+  /**
+   * Perform mode: the guide acts on the page (`act` effects), hands masked fields to the viewer,
+   * resumes a takeover from the next checkpoint, and never goes back (restart only).
+   */
+  perform?: boolean;
 }
 
 interface Leg { readonly i: number; readonly from: Point | null; readonly t0: number }
@@ -59,7 +65,7 @@ export type PlayerState = Common & (
   | { readonly phase: 'idle' }
   | { readonly phase: 'playing' }
   | { readonly phase: 'paused'; readonly why: PauseReason }
-  | { readonly phase: 'waiting'; readonly since: number; readonly for: 'target' | 'wait-step' | 'page' }
+  | { readonly phase: 'waiting'; readonly since: number; readonly for: 'target' | 'wait-step' | 'page' | 'until' }
   | { readonly phase: 'ended' }
 );
 
@@ -73,15 +79,24 @@ export type Msg =
   | { kind: 'prev' }
   | { kind: 'rate'; r: number }
   | { kind: 'takeover' }
-  /** `at`: the page the viewer is on (location.pathname); left out, every page matches. */
-  | { kind: 'frame'; now: number; look: LookFn; vp: Viewport; at?: string };
+  /** Go to step i with it still to play (resume after a page load). From idle, lands paused there. */
+  | { kind: 'jump'; i: number }
+  /**
+   * `at`: the page the viewer is on (location.pathname); left out, every page matches.
+   * `met`: whether step i's `until` holds now; left out, it always does.
+   */
+  | { kind: 'frame'; now: number; look: LookFn; vp: Viewport; at?: string; met?: (i: number) => boolean };
 
 export type Effect =
   | { fx: 'step'; i: number; by: ResolvedBy | null }
   | { fx: 'ripple'; x: number; y: number }
   | { fx: 'reveal'; i: number }
   | { fx: 'scroll'; i: number }
-  | { fx: 'stalled'; i: number; reason: 'not-found' | 'wait-timeout' }
+  | { fx: 'stalled'; i: number; reason: 'not-found' | 'wait-timeout' | 'until-timeout' }
+  /** Perform mode: do step i's action on the page, at (x, y) when the step aims at a point. */
+  | { fx: 'act'; i: number; x?: number; y?: number }
+  /** Perform mode: step i types into a masked field; the viewer does it. */
+  | { fx: 'handoff'; i: number }
   /** Step i happens on another page: the shell tells the host, and navigates when it may. */
   | { fx: 'page'; i: number; want: string }
   | { fx: 'end' };
@@ -129,10 +144,23 @@ export function pointOf(l: Look, step: NStep): Point {
 
 export function update(s: PlayerState, m: Msg, tr: NormalisedTrace, cfg: Config): [PlayerState, Effect[]] {
   switch (m.kind) {
-    case 'play':
+    case 'play': {
       if (s.phase === 'idle' || s.phase === 'ended') return [{ ...initial(s.clock.rate), phase: 'playing' }, NONE];
-      if (s.phase === 'paused') return [{ ...common(s), clock: C.stop(s.clock), leg: { i: s.i, from: s.pos, t0: s.clock.elapsed }, phase: 'playing' }, NONE];
-      return [s, NONE];
+      if (s.phase !== 'paused') return [s, NONE];
+      const going: PlayerState = { ...common(s), clock: C.stop(s.clock), leg: { i: s.i, from: s.pos, t0: s.clock.elapsed }, phase: 'playing' };
+      // The viewer typed the masked field: carry on from the next step.
+      if (s.why === 'handoff') {
+        if (s.i + 1 < tr.steps.length) return [catchUp(going, s.i + 1, tr), NONE];
+        return [{ ...going, clock: C.seek(going.clock, tr.duration), phase: 'ended' }, [{ fx: 'end' }]];
+      }
+      // After a takeover in perform mode, the page may have changed under the guide: resume from
+      // the next checkpoint, if one lies ahead.
+      if (s.why === 'takeover' && cfg.perform) {
+        const k = nextCheckpoint(tr, s.i, s.fired);
+        if (k > s.i) return [catchUp(going, k, tr), NONE];
+      }
+      return [going, NONE];
+    }
     case 'pause':
       return s.phase === 'playing' || s.phase === 'waiting' ? [paused(common(s), 'user'), NONE] : [s, NONE];
     case 'toggle':
@@ -144,7 +172,13 @@ export function update(s: PlayerState, m: Msg, tr: NormalisedTrace, cfg: Config)
     case 'rate':
       return [{ ...s, clock: C.setRate(s.clock, m.r) }, NONE];
     case 'seek':
+      // Perform mode can't undo what it did: only forward, or a restart from 0.
+      if (cfg.perform && m.t > 0 && m.t < s.clock.elapsed) return [s, NONE];
       return [seekTo(s, m.t, tr), NONE];
+    case 'jump': {
+      const j = Math.min(Math.max(Math.floor(m.i), 0), tr.steps.length - 1);
+      return [catchUp(s.phase === 'idle' || s.phase === 'ended' ? { ...common(s), phase: 'paused', why: 'user' } : s, j, tr), NONE];
+    }
     case 'next': {
       const t = s.clock.elapsed;
       const n = tr.steps.length;
@@ -152,6 +186,7 @@ export function update(s: PlayerState, m: Msg, tr: NormalisedTrace, cfg: Config)
       return [seekTo(s, target, tr), NONE];
     }
     case 'prev': {
+      if (cfg.perform) return [s, NONE];
       const t = s.clock.elapsed;
       const back = t > tr.travelStart[s.i] + 400 ? s.i - 1 : s.i - 2;
       return [seekTo(s, back >= 0 ? tr.end[back] : 0, tr), NONE];
@@ -224,6 +259,12 @@ export function aheadOn(tr: NormalisedTrace, i: number, at: string | undefined):
   return -1;
 }
 
+/** The first checkpoint step at or after i that hasn't happened yet, or -1. */
+export function nextCheckpoint(tr: NormalisedTrace, i: number, fired: number): number {
+  for (let k = Math.max(i, fired + 1); k < tr.steps.length; k += 1) if (tr.steps[k].checkpoint) return k;
+  return -1;
+}
+
 /** Jump to the start of step j with j still to play (a plain seek to a step's start can count it done). */
 function catchUp(s: PlayerState, j: number, tr: NormalisedTrace): PlayerState {
   const n = seekTo(s, tr.travelStart[j], tr);
@@ -265,8 +306,14 @@ function advance(s: PlayerState, m: Extract<Msg, { kind: 'frame' }>, tr: Normali
 
     if (t < st.travelStart) break;
 
+    // A `wait … until` holds until its condition is met (the shell checks it a few times a second).
+    if (st.until && gaveUp !== i && fired < i && !(m.met ? m.met(i) : true)) {
+      t = Math.max(prevT, st.travelStart);
+      return { ...build(), phase: 'waiting', since: m.now, for: 'until' };
+    }
+
     // Entering this step: its element must be there before the cursor sets off.
-    if (st.target && gaveUp !== i && fired < i) {
+    if (st.target && !st.until && gaveUp !== i && fired < i) {
       const l = m.look(i);
       if (!l) {
         t = Math.max(prevT, st.travelStart);
@@ -279,11 +326,18 @@ function advance(s: PlayerState, m: Extract<Msg, { kind: 'frame' }>, tr: Normali
       fired = i;
       const l = st.target ? m.look(i) : null;
       fx.push({ fx: 'step', i, by: l ? l.by : null });
-      if ((st.type === 'click' || st.type === 'dblclick') && l) {
-        const p = pointOf(l, st);
-        fx.push({ fx: 'ripple', x: p.x, y: p.y });
-      }
+      const p = l ? pointOf(l, st) : null;
+      if ((st.type === 'click' || st.type === 'dblclick') && p) fx.push({ fx: 'ripple', x: p.x, y: p.y });
       if (st.type === 'scroll') fx.push({ fx: 'scroll', i });
+      if (cfg.perform && ACTS.has(st.type)) {
+        // A trace never knows a masked field's text: the viewer types it.
+        if (st.type === 'type' && st.mask) {
+          fx.push({ fx: 'handoff', i });
+          t = st.at;
+          return paused(build(), 'handoff');
+        }
+        fx.push(p ? { fx: 'act', i, x: p.x, y: p.y } : { fx: 'act', i });
+      }
     }
 
     if (t < st.end) break;
@@ -297,7 +351,7 @@ function advance(s: PlayerState, m: Extract<Msg, { kind: 'frame' }>, tr: Normali
     if (i === n - 1) {
       if (t >= tr.duration) {
         fx.push({ fx: 'end' });
-        if (cfg.loop) return { ...initial(c.rate), phase: 'playing', clock: { elapsed: 0, rate: c.rate, last: m.now } };
+        if (cfg.loop && !cfg.perform) return { ...initial(c.rate), phase: 'playing', clock: { elapsed: 0, rate: c.rate, last: m.now } };
         t = tr.duration;
         return { ...build(), phase: 'ended' };
       }
@@ -319,14 +373,18 @@ function waitFrame(s: Extract<PlayerState, { phase: 'waiting' }>, m: Extract<Msg
     const j = aheadOn(tr, s.i, m.at);
     return j >= 0 ? catchUp({ ...s, clock }, j, tr) : { ...s, clock };
   }
-  if (m.look(s.i)) return { ...common(s), clock, leg: { i: s.i, from: s.pos, t0: clock.elapsed }, phase: 'playing' };
+  const here = s.for === 'until' ? (m.met ? m.met(s.i) : true) : !!m.look(s.i);
+  if (here) return { ...common(s), clock, leg: { i: s.i, from: s.pos, t0: clock.elapsed }, phase: 'playing' };
   if (m.now - s.since >= st.timeout) {
-    fx.push({ fx: 'stalled', i: s.i, reason: st.type === 'wait' ? 'wait-timeout' : 'not-found' });
+    fx.push({ fx: 'stalled', i: s.i, reason: s.for === 'until' ? 'until-timeout' : st.type === 'wait' ? 'wait-timeout' : 'not-found' });
     // Carry on without the element: the step keeps its time and caption, the cursor stays put.
     return { ...common(s), clock, gaveUp: s.i, leg: { i: s.i, from: s.pos, t0: clock.elapsed }, phase: 'playing' };
   }
   return { ...s, clock };
 }
+
+/** Steps perform mode acts out (scroll has its own effect in both modes). */
+const ACTS: ReadonlySet<string> = new Set(['click', 'dblclick', 'type', 'key', 'hover']);
 
 const scratch: Point = { x: 0, y: 0 };
 const scratch2: Point = { x: 0, y: 0 };
@@ -442,7 +500,11 @@ export function view(s: PlayerState, tr: NormalisedTrace, rawLook: LookFn, cfg: 
   const step = tr.steps[s.i];
 
   let caption: View['caption'] = null;
-  if (s.phase === 'waiting') caption = { text: `Looking for “${labelOf(step.target)}”…`, key: -2 - s.i };
+  if (s.phase === 'waiting' && s.for === 'until') {
+    const u = step.until!;
+    caption = { text: step.say ?? (u.gone ? `Waiting for “${labelOf(step.target)}” to go away…` : `Waiting for “${u.text}”…`), key: -3 - s.i };
+  } else if (s.phase === 'waiting') caption = { text: `Looking for “${labelOf(step.target)}”…`, key: -2 - s.i };
+  else if (s.phase === 'paused' && s.why === 'handoff') caption = { text: `Your turn: type in “${labelOf(step.target)}”, then press play.`, key: -4 - s.i };
   else if (s.phase === 'paused' && s.why === 'takeover' && cfg.resumeHint) caption = { text: 'Your turn. Press play to resume the guide.', key: -1 };
   else {
     for (let j = s.i; j >= 0 && j >= s.i - 8; j -= 1) {

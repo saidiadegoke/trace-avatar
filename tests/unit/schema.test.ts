@@ -25,6 +25,9 @@ const VALID = [
   t([{ type: 'note', say: 'x' }], { path: [0, 1, 2] }),
   t([{ type: 'note', say: 'x' }], { path: null }),
   t([{ type: 'note', say: 'x' }], { avatar: { image: 'data:image/png;base64,AA' } }),
+  t([{ type: 'wait', until: { text: 'Running' }, timeout: 600000 }, { type: 'wait', target: btn, until: { gone: true } }]),
+  t([{ type: 'wait', target: btn, until: { text: 'Done' } }, { type: 'note', say: 'x', checkpoint: true, page: '/app/*' }]),
+  t([{ type: 'note', say: 'x' }], { meta: { requires: ['signed-in', 'sandbox'] } }),
 ];
 
 const INVALID = [
@@ -38,6 +41,16 @@ const INVALID = [
   t([{ type: 'type', target: btn }]),
   t([{ type: 'key' }]),
   t([{ type: 'note' }]),
+  t([{ type: 'wait' }]),
+  t([{ type: 'wait', until: { gone: true } }]),
+  t([{ type: 'click', target: btn, until: { text: 'x' } }]),
+  t([{ type: 'wait', target: btn, until: {} }]),
+  t([{ type: 'wait', target: btn, until: { text: 'x', gone: true } }]),
+  t([{ type: 'wait', target: btn, until: { gone: false } }]),
+  t([{ type: 'wait', until: { text: 'x' }, timeout: 600001 }]),
+  t([{ type: 'note', say: 'x', checkpoint: 1 }]),
+  t([{ type: 'note', say: 'x' }], { meta: { requires: [''] } }),
+  t([{ type: 'note', say: 'x' }], { meta: { requires: 'signed-in' } }),
   t([{ type: 'note', say: '' }]),
   t([{ type: 'scroll' }]),
   t([{ type: 'note', say: 'x', t: -1 }]),
