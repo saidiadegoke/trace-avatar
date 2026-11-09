@@ -371,6 +371,10 @@ const trace = rec.stop();   // a valid trace.json, or null if nothing happened
   viewer can click along through a multi-page app.
 - **Typed text is masked by default.** Mark demo fields `data-trace-reveal` to keep their text. Passwords, card,
   one-time-code and other secret fields are always masked. `data-trace-ignore` hides anything from the recorder.
+- **Across page loads.** Give the recorder a `persistKey` (`createRecorder({ persistKey: 'app' })`) and create
+  it on every page: a recording that was going on the last page carries on, in the same tab, for up to 30 minutes
+  (`persistMs`). The page load itself counts as a pause. Coming back from another site (a sign-in) adds a pause step,
+  "Sign in, then press play.", and `signed-in` to `meta.requires`. `rec.restored` tells you it carried on.
 - The playground has a Record button: record, add captions in the JSON, play, download.
 
 ## Theming
@@ -395,7 +399,7 @@ Dark-mode colours apply automatically unless you set your own.
 ## Size
 
 About 14 KB min+brotli for the player (locators, overlay, controls, validation, pages, waits); perform mode is a
-separate 15 KB entry (player + hands), the recorder a separate 8 KB one, and the guides loader about 5 KB until its
+separate 15 KB entry (player + hands), the recorder a separate 9 KB one, and the guides loader about 5 KB until its
 first play. `size-limit` guards each in CI.
 
 ## Contributing

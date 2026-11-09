@@ -16,6 +16,8 @@ import type { Avatar, Trace } from '../core/format';
 import { isSecret, maskText, shouldMask } from '../core/mask';
 import type { FieldFacts } from '../core/mask';
 import { next, recClock, recElapsed, recPause, recResume } from '../core/recorder-state';
+import { REC_PERSIST_MS, SIGN_IN_NOTE, cameFromElsewhere, clockAt, resumeElapsed, savedOk, trimPath } from '../core/rec-store';
+import type { SavedRecording } from '../core/rec-store';
 import type { RecClock, RecorderAction, RecorderState } from '../core/recorder-state';
 import { ring } from '../core/ring';
 import { createEmitter } from './emitter';
@@ -43,9 +45,18 @@ export interface RecorderOptions {
   maxGapMs?: number;
   /** 'auto' (default) drops scrolls the player does anyway; 'all' keeps every scroll. */
   scrolls?: ScrollMode;
+  /**
+   * Carry on across full page loads: the recording is kept in sessionStorage under this key, and a
+   * recorder created with the same key on the next page (same tab, same site) picks it up.
+   */
+  persistKey?: string;
+  /** A kept recording older than this is dropped. Default 30 minutes. */
+  persistMs?: number;
   /** Count synthetic (untrusted) events too. Default false; tests only. */
   allowSynthetic?: boolean;
   now?: () => number;
+  /** Wall clock, for carrying on across page loads. Tests only. */
+  wall?: () => number;
 }
 
 export interface RecorderEvents extends Record<string, unknown> {
@@ -62,6 +73,8 @@ export interface Recorder {
   readonly state: RecorderState;
   /** Actions captured so far (before merging). */
   readonly count: number;
+  /** It carried on with a recording from the last page (persistKey). */
+  readonly restored: boolean;
   on<K extends keyof RecorderEvents>(ev: K, fn: (d: RecorderEvents[K]) => void): () => void;
   destroy(): void;
 }
@@ -116,6 +129,11 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
   let startUrl: string | undefined;
   let touches = 0;
   let pointers = 0;
+  let signin = false;
+  let restored = false;
+  const wall = opts.wall ?? (() => Date.now());
+  const storeKey = opts.persistKey ? `trace-avatar:rec:${opts.persistKey}` : null;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
   const ids = new WeakMap<object, string>();
   let nextId = 0;
   const keyOf = (o: object) => { let k = ids.get(o); if (!k) { nextId += 1; k = `e${nextId}`; ids.set(o, k); } return k; };
@@ -132,7 +150,35 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
     if (path) d.page = pagePattern(path);
     drafts.push(d);
     emitter.emit('draft', d);
+    // A click or a key can leave the page at once (a link, a form): keep it now. Typing and scrolls can wait.
+    if (d.kind === 'type' || d.kind === 'scroll') scheduleSave(); else save();
   };
+
+  // Carrying on across page loads.
+  const origin = (() => { try { return win.location.origin; } catch { return ''; } })();
+  function save() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (!storeKey || (state !== 'recording' && state !== 'paused')) return;
+    const elapsed = t();
+    const data: SavedRecording = {
+      v: 1, state, elapsed, savedAt: wall(), origin, drafts, path: trimPath(samples.toArray(), elapsed),
+      ...(startUrl ? { startUrl } : {}), touches, pointers, ...(signin ? { signin } : {}),
+    };
+    try { win.sessionStorage.setItem(storeKey, JSON.stringify(data)); } catch {
+      // Over the quota: the steps matter, the pointer path doesn't.
+      try { win.sessionStorage.setItem(storeKey, JSON.stringify({ ...data, path: [] })); } catch { /* storage off */ }
+    }
+  }
+  function scheduleSave() {
+    if (!storeKey || saveTimer) return;
+    saveTimer = setTimeout(save, 300);
+  }
+  function forget() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (!storeKey) return;
+    try { win.sessionStorage.removeItem(storeKey); } catch { /* storage off */ }
+  }
+  const onHide = () => save();
 
   const onMove = (e: PointerEvent) => {
     if (state !== 'recording' || ignored(e)) return;
@@ -221,14 +267,40 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
       startUrl = win.location?.pathname;
       touches = 0;
       pointers = 0;
+      signin = false;
       attach();
     } else if (action === 'pause') clock = recPause(clock, at);
     else if (action === 'resume') clock = recResume(clock, at);
     else if (action === 'stop') { clock = recPause(clock, at); detach(); }
     state = to;
+    if (to === 'stopped') forget(); else save();
     emitter.emit('state', { state });
     return true;
   };
+
+  if (storeKey) {
+    win.addEventListener('pagehide', onHide);
+    let kept: unknown = null;
+    try { kept = JSON.parse(win.sessionStorage.getItem(storeKey) ?? 'null'); } catch { kept = null; }
+    if (savedOk(kept, wall(), opts.persistMs ?? REC_PERSIST_MS) && kept.origin === origin) {
+      drafts = kept.drafts;
+      for (let i = 0; i + 2 < kept.path.length; i += 3) samples.push(kept.path[i], kept.path[i + 1], kept.path[i + 2]);
+      startUrl = kept.startUrl;
+      touches = kept.touches;
+      pointers = kept.pointers;
+      signin = !!kept.signin;
+      clock = clockAt(now(), resumeElapsed(kept, wall()), kept.state === 'paused');
+      state = kept.state;
+      restored = true;
+      attach();
+      // Back from another site (a sign-in): the guide hands that part to the viewer.
+      if (cameFromElsewhere(doc.referrer, origin)) {
+        signin = true;
+        add({ kind: 'note', t: kept.elapsed, say: SIGN_IN_NOTE, pause: true });
+      }
+      save();
+    } else if (kept !== null) forget();
+  }
 
   return {
     start: () => { go('start'); },
@@ -245,7 +317,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
         avatar: opts.avatar,
         meta: {
           ...(opts.title ? { title: opts.title } : {}),
-          ...(opts.requires?.length ? { requires: [...opts.requires] } : {}),
+          ...(opts.requires?.length || signin ? { requires: Array.from(new Set([...(opts.requires ?? []), ...(signin ? ['signed-in'] : [])])) } : {}),
           recordedAt: new Date().toISOString(),
           viewport: { w: win.innerWidth || 1, h: win.innerHeight || 1 },
           // Where playback must begin: the page the recording started on.
@@ -261,7 +333,14 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
     },
     get state() { return state; },
     get count() { return drafts.length; },
+    get restored() { return restored; },
     on: (ev, fn) => emitter.on(ev, fn),
-    destroy() { detach(); emitter.clear(); state = 'stopped'; },
+    destroy() {
+      detach();
+      forget();
+      if (storeKey) win.removeEventListener('pagehide', onHide);
+      emitter.clear();
+      state = 'stopped';
+    },
   };
 }

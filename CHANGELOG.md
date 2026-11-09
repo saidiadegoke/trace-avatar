@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.5
+
+Recording across page loads.
+
+- `createRecorder({ persistKey })`: the recording is kept in sessionStorage as it goes (at once after a click or a key,
+  shortly after typing, and on `pagehide`), and a recorder created with the same key on the next page carries on:
+  steps, pointer path, paused or recording. One trace, each step with its page. Kept for 30 minutes (`persistMs`), same origin and tab only; stopping or
+  `destroy()` forgets it. `rec.restored` says whether it carried on.
+- The time spent loading the page is a pause like any other (squeezed by `maxGapMs`).
+- Back from another origin (by the referrer, e.g. a sign-in): a `note` step "Sign in, then press play." that pauses,
+  and `signed-in` added to `meta.requires`, so `prepare` can sign the viewer in before Do it for me.
+- When storage is full the steps are kept without the pointer path; when storage is off, recording works on one page.
+- The recorder can now write `note` steps (a caption with no target).
+- Recorder budget 8 KB → 9 KB (8.63 KB measured).
+
 ## 0.1.4
 
 Links that open the app and play a guide.

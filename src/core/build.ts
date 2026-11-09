@@ -12,7 +12,7 @@
 import type { Avatar, Meta, Step, Target, Trace } from './format';
 import { simplify } from './motion';
 
-export type DraftKind = 'click' | 'dblclick' | 'type' | 'key' | 'scroll';
+export type DraftKind = 'click' | 'dblclick' | 'type' | 'key' | 'scroll' | 'note';
 
 export interface Draft {
   kind: DraftKind;
@@ -27,6 +27,9 @@ export interface Draft {
   to?: { x?: number; y?: number };
   /** The page it happened on (a pattern, ids as `*`). */
   page?: string;
+  /** A note's caption (a note is added by the recorder, e.g. after a sign-in on another site). */
+  say?: string;
+  pause?: boolean;
 }
 
 export const MERGE = { dblclickMs: 500, typeGapMs: 2000, scrollGapMs: 300 } as const;
@@ -137,6 +140,8 @@ function toStep(d: Draft): Step {
       return { type: 'key', t, keys: d.keys!, ...(d.target ? { target: d.target } : {}) };
     case 'scroll':
       return { type: 'scroll', t, to: d.to ?? {}, ...(d.target ? { target: d.target } : {}) };
+    case 'note':
+      return { type: 'note', t, say: d.say!, ...(d.pause ? { pause: true } : {}) };
     default: {
       const never: never = d.kind;
       return never;
@@ -161,7 +166,7 @@ export interface BuildInput {
 /** Build a trace, or null when nothing worth replaying was recorded. */
 export function build(input: BuildInput): Trace | null {
   const kept = pruneScrolls(
-    coalesce(input.drafts).filter((d) => (d.kind === 'key' ? !!d.keys : d.kind === 'scroll' ? true : !!d.target)),
+    coalesce(input.drafts).filter((d) => (d.kind === 'key' ? !!d.keys : d.kind === 'scroll' ? true : d.kind === 'note' ? !!d.say : !!d.target)),
     input.scrolls,
   );
   if (!kept.length) return null;

@@ -1,6 +1,6 @@
 {
   "name": "trace-avatar",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Turn a list of steps into a smooth, human-looking ghost-cursor walkthrough on your real page. Element-anchored, zero dependencies.",
   "main": "./dist/index.cjs",
   "scripts": {
@@ -141,7 +141,7 @@
     {
       "name": "recorder",
       "path": "dist/record.js",
-      "limit": "8 KB"
+      "limit": "9 KB"
     },
     {
       "name": "loader (CDN bootstrap)",

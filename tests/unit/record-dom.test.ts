@@ -400,3 +400,137 @@ describe('recorder: requires', () => {
     expect(none.stop()!.meta).not.toHaveProperty('requires');
   });
 });
+
+describe('recorder: across page loads (persistKey)', () => {
+  const KEY = 'trace-avatar:rec:t';
+  const click = (sel: string, x = 5, y = 5) => $(sel).dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
+  const live: Array<{ destroy(): void }> = [];
+  const make = (clock: { now: number; wall: number }, o: Record<string, unknown> = {}) => {
+    const r = createRecorder({ allowSynthetic: true, persistKey: 't', now: () => clock.now, wall: () => clock.wall, ...o });
+    live.push(r);
+    return r;
+  };
+  afterEach(() => { vi.restoreAllMocks(); for (const r of live.splice(0)) r.destroy(); sessionStorage.clear(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it('saves as it goes (debounced) and on pagehide; the next page carries on, the load counting as a gap', () => {
+    vi.useFakeTimers();
+    html('<button id="a">A</button><input id="f">');
+    history.replaceState({}, '', '/one');
+    const c = { now: 0, wall: 1_000_000 };
+    const first = make(c);
+    expect(first.restored).toBe(false);
+    first.start();
+    expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ state: 'recording', drafts: [], startUrl: '/one' });
+    c.now = 100; click('#a'); // a click is kept at once: it may leave the page
+    expect(JSON.parse(sessionStorage.getItem(KEY)!).drafts).toHaveLength(1);
+    c.now = 120; ($('#f') as HTMLInputElement).value = 'x'; $('#f').dispatchEvent(new Event('input', { bubbles: true }));
+    expect(JSON.parse(sessionStorage.getItem(KEY)!).drafts).toHaveLength(1); // typing waits 300 ms
+    vi.advanceTimersByTime(300);
+    expect(JSON.parse(sessionStorage.getItem(KEY)!).drafts).toHaveLength(2);
+    c.now = 150; $('#a').dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 9, clientY: 9 }));
+    c.now = 200; c.wall += 200;
+    window.dispatchEvent(new Event('pagehide'));
+    expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ elapsed: 200, path: [150, 9, 9] });
+
+    // The next page: a new document, a new monotonic clock, 6 s later by the wall clock.
+    html('<button id="b">B</button>');
+    history.replaceState({}, '', '/two');
+    const c2 = { now: 0, wall: c.wall + 6000 };
+    const second = make(c2);
+    expect(second.restored).toBe(true);
+    expect(second.state).toBe('recording');
+    expect(second.count).toBe(2);
+    c2.now = 50; click('#b');
+    const tr = second.stop()!;
+    expect(sessionStorage.getItem(KEY)).toBeNull();
+    expect(tr.meta?.url).toBe('/one');
+    expect(tr.steps.map((s) => [s.type, s.page])).toEqual([['click', '/one'], ['type', undefined], ['click', '/two']]);
+    expect(tr.steps[2].t! - tr.steps[1].t!).toBe(1500 + 0); // 6.15 s in real time, squeezed like any long pause
+    first.destroy();
+  });
+
+  it('a paused recording stays paused, its clock held', () => {
+    html('<button id="a">A</button>');
+    const c = { now: 0, wall: 1_000_000 };
+    const r = make(c);
+    r.start();
+    c.now = 100; click('#a');
+    c.now = 400; r.pause();
+    const next = make({ now: 0, wall: c.wall + 60_000 });
+    expect(next.state).toBe('paused');
+    next.resume();
+    const tr = next.stop()!;
+    expect(tr.steps).toHaveLength(1);
+  });
+
+  it('back from another site (a sign-in): a "Sign in, then press play" pause step, and signed-in required', () => {
+    html('<button id="a">A</button>');
+    const c = { now: 0, wall: 1_000_000 };
+    const r = make(c, { requires: ['sandbox'] });
+    r.start();
+    c.now = 100; click('#a');
+    c.now = 900; window.dispatchEvent(new Event('pagehide'));
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://auth.example/authorize?x=1');
+    const back = make({ now: 0, wall: c.wall + 20_000 }, { requires: ['sandbox'] });
+    const tr = back.stop()!;
+    expect(tr.steps.map((s) => s.type)).toEqual(['click', 'note']);
+    expect(tr.steps[1]).toMatchObject({ say: 'Sign in, then press play.', pause: true, t: 900 });
+    expect(tr.meta?.requires).toEqual(['sandbox', 'signed-in']);
+  });
+
+  it('a recording from another site, a stale one, or junk is dropped; a new start begins clean', () => {
+    const c = { now: 0, wall: 1_000_000 };
+    sessionStorage.setItem(KEY, JSON.stringify({ v: 1, state: 'recording', elapsed: 1, savedAt: c.wall, origin: 'https://other.example', drafts: [], path: [], touches: 0, pointers: 0 }));
+    expect(make(c).restored).toBe(false);
+    expect(sessionStorage.getItem(KEY)).toBeNull();
+    sessionStorage.setItem(KEY, JSON.stringify({ v: 1, state: 'recording', elapsed: 1, savedAt: c.wall - 31 * 60_000, origin: location.origin, drafts: [], path: [], touches: 0, pointers: 0 }));
+    expect(make(c).restored).toBe(false);
+    sessionStorage.setItem(KEY, '{nope');
+    expect(make(c).restored).toBe(false);
+    expect(make(c).restored).toBe(false); // nothing kept: nothing to drop
+  });
+
+  it('full storage keeps the steps without the path; storage that throws only means no carrying on', () => {
+    html('<button id="a">A</button>');
+    const c = { now: 0, wall: 1_000_000 };
+    const real = sessionStorage.setItem.bind(sessionStorage);
+    const writes: string[] = [];
+    vi.spyOn(sessionStorage, 'setItem').mockImplementation((k: string, v: string) => {
+        if (k === KEY && JSON.parse(v).path.length) throw new Error('quota');
+      writes.push(v);
+      real(k, v);
+    });
+    const r = make(c);
+    r.start();
+    c.now = 50; $('#a').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 3, clientY: 3 }));
+    window.dispatchEvent(new Event('pagehide'));
+    expect(JSON.parse(writes[writes.length - 1]).path).toEqual([]);
+    vi.restoreAllMocks();
+    vi.spyOn(sessionStorage, 'setItem').mockImplementation(() => { throw new Error('off'); });
+    vi.spyOn(sessionStorage, 'getItem').mockImplementation(() => { throw new Error('off'); });
+    vi.spyOn(sessionStorage, 'removeItem').mockImplementation(() => { throw new Error('off'); });
+    const off = make(c);
+    off.start();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(off.stop()).toBeNull();
+    r.destroy();
+  });
+
+  it('destroy forgets the kept recording and stops listening for pagehide; without a key nothing is kept', () => {
+    vi.useFakeTimers();
+    html('<input id="f">');
+    const c = { now: 0, wall: 1_000_000 };
+    const r = make(c);
+    r.start();
+    c.now = 10; ($('#f') as HTMLInputElement).value = 'x'; $('#f').dispatchEvent(new Event('input', { bubbles: true })); // a save is pending
+    r.destroy();
+    vi.advanceTimersByTime(1000);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sessionStorage.getItem(KEY)).toBeNull();
+    const plain = createRecorder({ allowSynthetic: true, now: () => c.now });
+    plain.start();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sessionStorage.length).toBe(0);
+    plain.destroy();
+  });
+});
