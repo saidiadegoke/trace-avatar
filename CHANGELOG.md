@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.7 (9 Nov 2026)
 
 - README GIFs of Show me and Do it for me (`media/`), rendered with the new trace-avatar-render.
 - The vanilla example takes `?mode=off` (no guide starts; for renderers that bring their own player).
@@ -27,6 +27,12 @@
 - The recorder notes up to 5 short texts that appear in the 3 s after a click or key (`recorder.hints` after
   `stop()`), skipping fields, masked and blurred areas and anything containing a masked field's value. They are never
   saved in a trace.
+- **Repair:** `trace-avatar/repair` (CDN `trace-repair.min.js`): `candidatesOf(root, { skip })`, `targetFor(id)`
+  (the recorder's buildTarget), `resolvesTo(target, el)` (the player's resolver), `elementOf(id)`. In
+  `trace-avatar/assist`: `chooseRepair` (scores first, AI only when unsure, task `'repair'`), `scoreCandidates`,
+  `clearWinner`, `similarity`, `repairPayload`, `toRepairChoice`, `repairSuggestion`. Suggestions gain
+  `kind: 'target'` (with `target`, `verified`), which `apply()` takes. Budget: repair 3.5 KB (3.19 KB; most of it is
+  buildTarget and the locators, reused so a fix is found exactly as the player finds it).
 - assist is measured twice: in a page (`suggest`, `apply`: 4 KB budget) and with the server-side providers (6 KB).
 - Budgets raised openly: recorder 9 → 9.5 KB (the text watcher), studio 14.5 → 15 KB npm / 15.5 KB CDN (the Suggest
   button, hints and accepting).

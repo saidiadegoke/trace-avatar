@@ -1,6 +1,6 @@
 {
   "name": "trace-avatar",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Turn a list of steps into a smooth, human-looking ghost-cursor walkthrough on your real page. Element-anchored, zero dependencies.",
   "main": "./dist/index.cjs",
   "scripts": {
@@ -93,6 +93,11 @@
       "types": "./dist/assist.d.ts",
       "import": "./dist/assist.js",
       "require": "./dist/assist.cjs"
+    },
+    "./repair": {
+      "types": "./dist/repair.d.ts",
+      "import": "./dist/repair.js",
+      "require": "./dist/repair.cjs"
     },
     "./export": {
       "types": "./dist/export.d.ts",
@@ -218,6 +223,12 @@
       "path": "dist/assist.js",
       "import": "{ suggest, apply, openAiCompatible, gemini, gateway }",
       "limit": "6 KB"
+    },
+    {
+      "name": "repair (candidates on a page, re-recording one as a target; reuses the recorder's buildTarget and the player's locators)",
+      "path": "dist/repair.js",
+      "import": "{ candidatesOf, targetFor, resolvesTo }",
+      "limit": "3.5 KB"
     },
     {
       "name": "studio's Suggest section (trace-studio-assist.min.js, loaded on first use)",

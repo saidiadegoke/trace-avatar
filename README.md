@@ -452,6 +452,28 @@ Answers are checked: a caption is at most 140 characters, a wait only uses a tex
 trace must stay valid, or the suggestion is left out. trace-avatar-render adds a visual check of rendered frames
 (`--qa`) and alt text (`--alt`).
 
+## Repairing a broken guide
+
+When the app changes and a step can't find its element ("Looking for 'Save'…"), `trace-avatar/repair` lists what
+the step could mean on the page now. `chooseRepair` (in `trace-avatar/assist`) picks one: code scores the
+candidates first, and an AI is asked only when no candidate is a clear winner. The chosen element is re-recorded
+the way the recorder does it, and checked with the player's own resolver. The fix is a suggestion that `apply()`
+takes once a person agrees.
+
+```js
+import { candidatesOf, targetFor, resolvesTo, elementOf } from 'trace-avatar/repair';
+import { chooseRepair, repairSuggestion, apply } from 'trace-avatar/assist';
+const list = candidatesOf(document);                                   // [{ id, role, name, text, near }]
+const choice = await chooseRepair(trace, stalledIndex, list, { ai });  // { id, by: 'score' | 'ai' | 'none', top }
+const target = targetFor(choice.id);                                   // as if a person had just clicked it
+if (resolvesTo(target, elementOf(choice.id))) next = apply(trace, [repairSuggestion(trace, stalledIndex, target)]);
+```
+
+A field's value is never read. Hidden, `[data-trace-ignore]`, `[data-trace-mask]` and `[data-trace-blur]` areas are
+never offered. The AI gets the step, its neighbours and the best 30 candidates: no ids or test ids, and nothing that
+contains a value typed in the guide. trace-avatar-render's `--repair` does all of this when a render stalls, and plays
+the guide again to verify the fix.
+
 ## Theming
 
 ```css
@@ -514,7 +536,7 @@ page load can't be saved this way (the page doing the recording goes away); use 
 
 About 14 KB min+brotli for the player (locators, overlay, controls, validation, pages, waits); perform mode is a
 separate 15 KB entry (player + hands), the recorder a separate 9 KB one, the studio about 14 KB (loaded only for authors), the guides loader about
-6 KB until its first play, Save as video 2.5 KB (plus 5 KB for the GIF encoder, loaded only for a GIF), and AI suggestions 3.8 KB in a page (5.5 KB with the server-side providers; the studio's Suggest section, 4.8 KB, loads only when opened). `size-limit` guards each in CI.
+6 KB until its first play, Save as video 2.5 KB (plus 5 KB for the GIF encoder, loaded only for a GIF), repair 3.2 KB, and AI suggestions 3.8 KB in a page (5.5 KB with the server-side providers; the studio's Suggest section, 4.8 KB, loads only when opened). `size-limit` guards each in CI.
 
 ## Contributing
 

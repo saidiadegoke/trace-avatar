@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>repair fixture</title>
+  <style>body { font: 16px system-ui, sans-serif; } .gone { display: none; }</style>
+</head>
+<body>
+  <nav aria-label="Menu"><a href="#invoices">Invoices</a> <a href="#customers">Customers</a></nav>
+  <section>
+    <h2>New invoice</h2>
+    <label>Customer <input id="customer" value="Grace Hopper"></label>
+    <textarea aria-label="Notes">a private note</textarea>
+    <div contenteditable="true" aria-label="Memo">typed memo</div>
+    <button data-testid="save"><span class="icon">💾</span> Save invoice</button>
+    <button id="ember42">Save draft</button>
+    <button class="gone">Hidden save</button>
+    <div role="button" tabindex="0">Preview</div>
+  </section>
+  <div data-trace-mask><button>Masked action</button></div>
+  <div data-trace-blur><button>Blurred action</button></div>
+  <div data-trace-ignore><button>Ignored action</button></div>
+  <div class="dev"><button>Dev toolbar</button></div>
+  <div role="dialog" aria-label="Confirm delete"><button>Delete</button></div>
+  <script src="/dist/trace-repair.min.js"></script>
+</body>
+</html>
