@@ -190,7 +190,7 @@ export function createTrace(opts: TraceOptions): TraceController {
   }
   const hands: Performer | null = perform && doc && opts.performer ? opts.performer(doc) : null;
   /** Perform mode's typing in progress: step i, n characters typed into field. */
-  let typing: { i: number; n: number; field: Element } | null = null;
+  let typing: { i: number; n: number; field: Element; wait?: boolean } | null = null;
   /** A start is waiting on onReset / prepare. */
   let starting = false;
   /** The guide has started at least once (a later start in perform mode resets the app first). */
@@ -343,7 +343,17 @@ export function createTrace(opts: TraceOptions): TraceController {
       if (!el) return;
       if (step.type === 'click' || step.type === 'dblclick') hands.click(el, x, y, step.type === 'dblclick');
       else if (step.type === 'hover') hands.hover(el, x, y);
-      else if (step.type === 'type') { typing = { i: step.i, n: 0, field: hands.startTyping(el) }; keepTyping(); }
+      else if (step.type === 'type') {
+        const field = hands.startTyping(el);
+        // A rich-text editor (Lexical, ProseMirror) learns of its focus from `selectionchange`, a task of its
+        // own: typing before that task (even a frame later) loses the first letters. So a rich field waits
+        // for the next task, then types all the timing has reached (the frame loop carries on from there).
+        const rich = (field as HTMLElement).isContentEditable;
+        const t = { i: step.i, n: 0, field, wait: rich };
+        typing = t;
+        if (rich) setTimeout(() => { t.wait = false; if (typing === t) keepTyping(); }, 0);
+        else keepTyping();
+      }
     } catch (e) {
       emitter.emit('error', new TraceError(`perform step ${step.i} (${step.type}) failed: ${(e as Error)?.message ?? e}`));
     }
@@ -351,7 +361,7 @@ export function createTrace(opts: TraceOptions): TraceController {
 
   /** Type as much of the current type step as its timing has reached; `change` when it's done. */
   function keepTyping() {
-    if (!typing || !tr || !hands) return;
+    if (!typing || typing.wait || !tr || !hands) return;
     const step = tr.steps[typing.i];
     const text = step.text ?? '';
     const t = s.clock.elapsed;

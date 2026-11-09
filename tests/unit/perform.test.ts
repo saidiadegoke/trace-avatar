@@ -185,6 +185,20 @@ describe('createPerformer', () => {
     hands.finishTyping(el); // no change event for rich text
   });
 
+  it('rich text: each insert goes at the end of the last text, or into the empty last line, never after the last paragraph', () => {
+    html('<div id="r" contenteditable="true"><p>One</p><p><span>Two</span></p></div><div id="e" contenteditable="true"><p><br></p></div>');
+    const hands = createPerformer(document);
+    const at: string[] = [];
+    (document as Document & { execCommand: unknown }).execCommand = vi.fn((cmd: string) => {
+      const sel = document.getSelection()!;
+      if (cmd === 'insertText') at.push(`${sel.anchorNode?.nodeName}:${sel.anchorNode?.textContent}@${sel.anchorOffset}`);
+      return cmd === 'insertText';
+    });
+    hands.typeTo($('#r'), 'x', 0, 1);
+    hands.typeTo($('#e'), 'y', 0, 1);
+    expect(at).toEqual(['#text:Two@3', 'P:@1']); // Firefox would leave a caret on the div, where Lexical ignores input
+  });
+
   it('a select picks the option by its text (or value), once, when typing reaches the end', () => {
     html('<select id="s"><option value="1">One</option><option value="2">Two</option></select>');
     const sel = $<HTMLSelectElement>('#s');

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Do it for me in rich-text editors:** typing now starts one task after the field is focused. Lexical (and
+  editors like it) learns of its focus from `selectionchange`, a task of its own, so the first letters typed in the
+  same moment, or even a frame later, were lost ("ind the opening hours…"). And each insert now goes at the end of
+  the field's last text (or into its empty last line): Firefox left the caret after the last paragraph, where
+  Lexical ignores input, so only the first letter got in. Both found playing a guide in DutyCaptain's New task form.
+- Budgets: core and React 14.25 → 14.5 KB (the fix, 14.27 KB).
+
 ## 0.1.9 (9 Nov 2026)
 
 - **Fix a wait whose text changed:** a guide that stalls with `until-timeout` (it waited for "Saved"; the app now says

@@ -444,6 +444,29 @@ describe('perform mode, prepare, reset, resume, until (0.1.2)', () => {
     return { calls, performer };
   };
 
+  it('a rich-text field is typed into only after the task that follows its focus (Lexical lost the first letter)', async () => {
+    const calls: unknown[][] = [];
+    const rich = document.createElement('div');
+    Object.defineProperty(rich, 'isContentEditable', { value: true }); // jsdom has no isContentEditable
+    const performer = vi.fn(() => ({
+      click: () => {}, hover: () => {}, key: () => {}, focus: () => {}, finishTyping: () => { calls.push(['finish']); },
+      startTyping: () => { calls.push(['start']); return rich; },
+      typeTo: (_f: Element, text: string, from: number, to: number) => { calls.push(['type', text.slice(from, to)]); },
+    }));
+    const tr: Trace = { version: 1, steps: [{ type: 'type', target: { sel: '#b' }, text: 'Find', t: 100 }] };
+    const t = make({ trace: tr, mode: 'perform', performer, reducedMotion: true });
+    await t.ready;
+    t.play();
+    for (let i = 0; i < 400 && !calls.length; i += 1) clock.run(10);
+    expect(calls).toEqual([['start']]);
+    clock.run(2000);                                         // frames come, but the focus task hasn't run
+    expect(calls).toEqual([['start']]);
+    await new Promise((r) => setTimeout(r, 0));             // then it types all the timing has reached, at once
+    expect(calls.filter((c) => c[0] === 'type').map((c) => c[1]).join('')).toBe('Find');
+    expect(calls[calls.length - 1]).toEqual(['finish']);
+    t.destroy();
+  });
+
   it("mode: 'perform' needs a performer", () => {
     expect(() => make({ mode: 'perform' })).toThrow(/trace-avatar\/perform/);
   });

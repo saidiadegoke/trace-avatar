@@ -108,12 +108,25 @@ export function createPerformer(doc: Document): Performer {
   const inputEvent = (el: Element, data: string | null, inputType: string) =>
     el.dispatchEvent(new Input('input', { bubbles: true, composed: true, data, inputType } as InputEventInit));
 
+  /**
+   * The caret at the end of the field's text: inside its last text node (or its last line, when empty), not
+   * after the field's last child. Firefox leaves a caret there, outside every paragraph, and an editor like
+   * Lexical ignores what is typed at it (only the first letter got in).
+   */
   const caretToEnd = (field: Element) => {
     const sel = doc.getSelection?.();
     if (!sel) return;
     const range = doc.createRange();
-    range.selectNodeContents(field);
-    range.collapse(false);
+    let last: Node | null = null;
+    const walk = doc.createTreeWalker(field, 4 /* NodeFilter.SHOW_TEXT */);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) last = n;
+    if (last) range.setStart(last, (last as Text).length);
+    else {
+      let el: Element = field;
+      while (el.lastElementChild && el.lastElementChild.tagName !== 'BR') el = el.lastElementChild;
+      range.selectNodeContents(el);
+    }
+    range.collapse(!!last);
     sel.removeAllRanges();
     sel.addRange(range);
   };
