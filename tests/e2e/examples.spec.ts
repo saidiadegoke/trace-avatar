@@ -163,3 +163,40 @@ for (const path of ['/playground/', '/examples/vanilla-html/']) {
     }
   });
 }
+
+test('guides example: one script tag; the launcher and the page’s own buttons play both modes', async ({ page }) => {
+  await page.goto('/examples/guides-html/');
+  const launcher = page.locator('[data-trace-avatar=launcher]');
+  await page.waitForFunction(() => (window as any).TraceAvatarAuto?.guides?.manifest);
+  await launcher.locator('.fab').click();
+  await expect(launcher.locator('.t')).toHaveText(['Create an invoice', 'Send an invoice']);
+  await expect(launcher.locator('.menu button')).toHaveText(['Show me', 'Do it for me', 'Show me']);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Show me how' }).click();
+  await expect(page.locator('[data-trace-avatar]:not([data-trace-avatar=launcher])').locator('.bubble')).toHaveText(/Let’s create an invoice/);
+  await expect(page.locator('#customer')).toHaveValue('');
+  await page.getByRole('button', { name: 'Do it for me', exact: true }).click(); // replaces the guide playing
+  await expect(page.locator('#sent')).toHaveText('Sent to Ada Stores for ₦125,000.', { timeout: 20_000 });
+});
+
+test('React example, AppGuides: <TraceGuides> gives a launcher and data-trace-guide buttons, both modes', async ({ page }) => {
+  await page.goto('/tests/e2e/fixtures/react-example.html?example=guides');
+  const launcher = page.locator('[data-trace-avatar=launcher]');
+  await launcher.locator('.fab').click();
+  await expect(launcher.locator('.menu button')).toHaveText(['Show me', 'Do it for me']);
+  await launcher.getByRole('menuitem', { name: 'Do it for me: Create an invoice' }).click();
+  await expect(page.locator('#sent')).toHaveText('Sent to Ada Stores', { timeout: 15_000 });
+  await expect(launcher.locator('.fab')).toHaveText('?', { timeout: 10_000 });
+  await page.getByRole('textbox', { name: 'Customer' }).fill('');
+  await page.getByRole('button', { name: 'Show me how' }).click();
+  await expect(page.locator('[data-trace-avatar]:not([data-trace-avatar=launcher])').locator('.bubble')).toHaveText('Send it.', { timeout: 15_000 });
+  await expect(page.getByRole('textbox', { name: 'Customer' })).toHaveValue('');
+});
+
+test('the README guides manifest is valid', async ({ page }) => {
+  const { readFileSync } = await import('node:fs');
+  const block = /```json\n(\{\n  "version": 1,\n  "guides"[\s\S]*?)```/.exec(readFileSync('README.md', 'utf8'))![1];
+  await page.goto('/tests/e2e/fixtures/blank.html');
+  await page.addScriptTag({ url: '/dist/trace-auto.min.js' });
+  expect(await page.evaluate((m) => (window as any).TraceAvatarAuto.validateManifest(JSON.parse(m)).errors, block)).toEqual([]);
+});

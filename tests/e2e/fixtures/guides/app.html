@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Guides fixture</title>
+<style>body{font:15px system-ui;margin:40px;display:grid;gap:12px;max-width:420px}</style>
+<script src="/tests/e2e/fixtures/guides/loader.js"></script></head>
+<body>
+  <label>Customer <input id="customer"></label>
+  <label>Amount <input id="amount"></label>
+  <button id="send" onclick="document.getElementById('sent').textContent = 'Sent to ' + customer.value + ' for ' + amount.value">Send invoice</button>
+  <p id="sent"></p>
+  <button id="own" data-trace-guide="invoice">Show me how</button>
+  <button id="own-do" data-trace-guide="invoice" data-trace-mode="perform">Do it for me</button>
+  <a id="next" href="/tests/e2e/fixtures/guides/page2.html">Next page</a>
+</body></html>

@@ -1,6 +1,6 @@
 {
   "name": "trace-avatar",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Turn a list of steps into a smooth, human-looking ghost-cursor walkthrough on your real page. Element-anchored, zero dependencies.",
   "main": "./dist/index.cjs",
   "scripts": {
@@ -75,7 +75,13 @@
       "import": "./dist/perform.js",
       "require": "./dist/perform.cjs"
     },
+    "./auto": {
+      "types": "./dist/auto.d.ts",
+      "import": "./dist/auto.js",
+      "require": "./dist/auto.cjs"
+    },
     "./schema.json": "./schema/trace.v1.json",
+    "./guides.schema.json": "./schema/guides.v1.json",
     "./package.json": "./package.json",
     "./record": {
       "types": "./dist/record.d.ts",
@@ -104,12 +110,23 @@
       "limit": "14 KB"
     },
     {
-      "name": "react adapter + core",
+      "name": "react adapter (TraceAvatar, useTrace) + core",
       "path": "dist/react.js",
       "ignore": [
         "react"
       ],
-      "limit": "14 KB"
+      "limit": "14 KB",
+      "import": "{ TraceAvatar, useTrace }"
+    },
+    {
+      "name": "react TraceGuides (loader, npm)",
+      "path": "dist/react.js",
+      "import": "{ TraceGuides }",
+      "ignore": [
+        "react",
+        "./perform.js"
+      ],
+      "limit": "5.5 KB"
     },
     {
       "name": "CDN build",
@@ -125,6 +142,20 @@
       "name": "recorder",
       "path": "dist/record.js",
       "limit": "8 KB"
+    },
+    {
+      "name": "loader (CDN bootstrap)",
+      "path": "dist/trace-auto.min.js",
+      "limit": "5.5 KB"
+    },
+    {
+      "name": "loader (npm, before the first play)",
+      "path": "dist/auto.js",
+      "import": "{ mount }",
+      "limit": "5.5 KB",
+      "ignore": [
+        "./perform.js"
+      ]
     }
   ],
   "homepage": "https://saidiadegoke.github.io/trace-avatar/",

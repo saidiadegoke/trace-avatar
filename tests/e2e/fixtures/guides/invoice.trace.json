@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "steps": [
+    { "type": "type", "target": { "role": "textbox", "name": "Customer" }, "text": "Ada Stores", "t": 300, "say": "Pick the customer." },
+    { "type": "type", "target": { "role": "textbox", "name": "Amount" }, "text": "125000" },
+    { "type": "click", "target": { "role": "button", "name": "Send invoice" }, "say": "Send it." }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "steps": [
+    { "type": "click", "page": "/tests/e2e/fixtures/guides/app.html", "target": { "sel": "#next" }, "t": 300 },
+    { "type": "click", "page": "/tests/e2e/fixtures/guides/page2.html", "target": { "sel": "#finish" } }
+  ]
+}

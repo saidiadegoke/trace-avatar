@@ -1,0 +1,254 @@
+/**
+ * The loader's core: a guide manifest, a launcher, `data-trace-guide` buttons, and playing a guide
+ * by id. The player is loaded only when a guide is first played (`loaders.player`), so a page that
+ * never plays one pays for the loader alone.
+ *
+ * Entries pass their own loaders: the npm entry uses import(), the CDN build adds a script tag.
+ */
+
+import { findGuide, guidesOn, modesOf, parseManifest } from '../core/manifest';
+import type { GuideMode, Manifest, NGuide, NManifest } from '../core/manifest';
+import type { Avatar } from '../core/format';
+import type { PrepareResult, TraceController, TraceOptions } from '../index';
+import type { NormalisedTrace } from '../core/format';
+import { createEmitter } from '../shell/emitter';
+import { createLauncher } from '../shell/launcher.dom';
+import type { Launcher, LauncherPosition } from '../shell/launcher.dom';
+import type { CaptionMode } from '../shell/renderer.shadow';
+
+export interface PlayerModule { createTrace(o: TraceOptions): TraceController }
+
+export interface Loaders {
+  /** The player that plays both modes (trace-avatar/perform). */
+  player(): Promise<PlayerModule>;
+}
+
+export interface MountOptions {
+  /** A manifest URL, or the manifest itself. */
+  guides: string | Manifest;
+  /** Where the corner button sits, or false to hide it (use your own data-trace-guide buttons). Default 'bottom-right'. */
+  launcher?: LauncherPosition | false;
+  /** Allow Do it for me for guides whose manifest entry lists 'perform'. Default false. */
+  perform?: boolean;
+  navigate?: (path: string) => void;
+  prepare?: (requires: string[], trace: NormalisedTrace) => PrepareResult | Promise<PrepareResult>;
+  onReset?: () => void | Promise<void>;
+  currentPath?: () => string;
+  /** The player's controls bar. Default true. */
+  controls?: boolean;
+  captions?: CaptionMode;
+  rate?: number;
+  avatar?: Avatar;
+  /** Where buttons are looked for and the launcher goes. Default: document. */
+  doc?: Document;
+}
+
+export interface GuideEvent { id: string; mode: GuideMode }
+export interface GuidesEvents extends Record<string, unknown> {
+  ready: { manifest: NManifest };
+  play: GuideEvent & { controller: TraceController };
+  end: GuideEvent;
+  stop: GuideEvent;
+  error: Error;
+}
+
+export interface PlayOptions { mode?: GuideMode }
+
+export interface GuidesController {
+  /** Resolves when the manifest is loaded (rejects when it can't be). */
+  readonly ready: Promise<void>;
+  readonly manifest: NManifest | null;
+  /** The guide playing now. */
+  readonly playing: (GuideEvent & { controller: TraceController }) | null;
+  /** Play a guide from the manifest by id. Resolves to its controller, or null when it can't play. */
+  play(id: string, o?: PlayOptions): Promise<TraceController | null>;
+  stop(): void;
+  /** The guides offered on a page (default: the viewer's page). */
+  list(path?: string): NGuide[];
+  /** The modes a guide may be played in here. */
+  modes(id: string): GuideMode[];
+  on<K extends keyof GuidesEvents>(ev: K, fn: (d: GuidesEvents[K]) => void): () => void;
+  readonly launcher: Launcher | null;
+  destroy(): void;
+}
+
+/** sessionStorage: the guide playing, so the next page (after a full load) carries on with it. */
+export const ACTIVE_KEY = 'trace-avatar:auto:active';
+const ACTIVE_MS = 10 * 60_000;
+/** How long the last step stays on screen after a guide ends. */
+export const END_HOLD_MS = 2000;
+
+export class GuideError extends Error {
+  constructor(message: string, public readonly id?: string) { super(message); this.name = 'GuideError'; }
+}
+
+export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
+  const doc = opts.doc ?? document;
+  const win = doc.defaultView;
+  const emitter = createEmitter<GuidesEvents>();
+  const performAllowed = !!opts.perform;
+  let manifest: NManifest | null = null;
+  let base = win?.location?.href ?? 'http://localhost/';
+  let current: (GuideEvent & { controller: TraceController }) | null = null;
+  let endTimer: ReturnType<typeof setTimeout> | null = null;
+  let destroyed = false;
+  let player: Promise<PlayerModule> | null = null;
+
+  const where = (): string | undefined => {
+    try { return opts.currentPath ? opts.currentPath() : win?.location?.pathname; } catch { return undefined; }
+  };
+  /** Errors go to 'error' listeners; with none, to the console, so a typo in an id is never silent. */
+  const report = (e: Error) => {
+    if (emitter.count('error')) emitter.emit('error', e);
+    else console.warn(`[trace-avatar] ${e.message}`);
+  };
+  const fail = (message: string, id?: string) => { report(new GuideError(message, id)); };
+
+  const store = {
+    get(): { id: string; mode: GuideMode; at: number } | null {
+      try {
+        const v = JSON.parse(win?.sessionStorage.getItem(ACTIVE_KEY) ?? 'null');
+        return v && typeof v.id === 'string' && (v.mode === 'overlay' || v.mode === 'perform') && typeof v.at === 'number' ? v : null;
+      } catch { return null; }
+    },
+    set(id: string, mode: GuideMode) { try { win?.sessionStorage.setItem(ACTIVE_KEY, JSON.stringify({ id, mode, at: Date.now() })); } catch { /* storage off */ } },
+    clear() { try { win?.sessionStorage.removeItem(ACTIVE_KEY); } catch { /* storage off */ } },
+  };
+
+  const launcher: Launcher | null = doc.body || doc.documentElement ? createLauncher({
+    doc,
+    position: opts.launcher || 'bottom-right',
+    hidden: opts.launcher === false,
+    items: () => (manifest ? guidesOn(manifest, where()) : []).map((g) => ({ id: g.id, title: g.title, modes: modesOf(g, performAllowed) })).filter((g) => g.modes.length),
+    onPlay: (id, mode) => { void play(id, { mode }); },
+    onStop: () => stop(),
+  }) : null;
+
+  const traceOf = (g: NGuide) => (typeof g.trace === 'string' ? new URL(g.trace, base).href : g.trace);
+  const loadPlayer = () => (player ??= loaders.player().catch((e) => { player = null; throw e; }));
+
+  function clearCurrent(kind: 'end' | 'stop' | null) {
+    if (endTimer) { clearTimeout(endTimer); endTimer = null; }
+    const c = current;
+    current = null;
+    store.clear();
+    launcher?.setPlaying(false);
+    if (!c) return;
+    c.controller.destroy();
+    if (kind) emitter.emit(kind, { id: c.id, mode: c.mode });
+  }
+
+  async function play(id: string, o: PlayOptions = {}, resuming = false): Promise<TraceController | null> {
+    if (destroyed) return null;
+    try { await ready; } catch { return null; }
+    const g = manifest && findGuide(manifest, id);
+    if (!g) { fail(`no guide "${id}" in the manifest`, id); return null; }
+    const allowed = modesOf(g, performAllowed);
+    const mode = o.mode ?? allowed[0];
+    if (!mode || !allowed.includes(mode)) {
+      fail(mode === 'perform' ? `"${id}" can't be played as Do it for me here (the manifest and mount({ perform: true }) must both allow it)` : `"${id}" has no mode that can play here`, id);
+      return null;
+    }
+    let mod: PlayerModule;
+    try { mod = await loadPlayer(); } catch (e) { fail(`could not load the player: ${(e as Error).message}`, id); return null; }
+    if (destroyed) return null;
+    clearCurrent(current ? 'stop' : null);
+    let c: TraceController;
+    try {
+      c = mod.createTrace({
+        trace: traceOf(g),
+        mode,
+        controls: opts.controls ?? true,
+        autoplay: !resuming,
+        resumeKey: `auto:${g.id}`,
+        ...(opts.captions ? { captions: opts.captions } : {}),
+        ...(opts.rate ? { rate: opts.rate } : {}),
+        ...(opts.avatar ? { avatar: opts.avatar } : {}),
+        ...(opts.navigate ? { navigate: opts.navigate } : {}),
+        ...(opts.prepare ? { prepare: opts.prepare } : {}),
+        ...(opts.onReset ? { onReset: opts.onReset } : {}),
+        ...(opts.currentPath ? { currentPath: opts.currentPath } : {}),
+      });
+    } catch (e) { fail(`"${id}" could not start: ${(e as Error).message}`, id); return null; }
+    const entry = { id: g.id, mode, controller: c };
+    current = entry;
+    store.set(g.id, mode);
+    launcher?.setPlaying(true);
+    c.on('error', (e) => { report(new GuideError(e.message, g.id)); });
+    c.on('end', () => {
+      if (current !== entry) return;
+      store.clear();
+      endTimer = setTimeout(() => { if (current === entry) clearCurrent('end'); }, END_HOLD_MS);
+    });
+    try { await c.ready; } catch {
+      if (current === entry) clearCurrent(null);
+      return null;
+    }
+    if (resuming) {
+      // Carry on only when the player found where it was (it pauses there); otherwise drop it.
+      if (c.state !== 'paused') { if (current === entry) clearCurrent(null); return null; }
+      c.play();
+    }
+    if (current === entry) emitter.emit('play', entry);
+    return c;
+  }
+
+  function stop() { clearCurrent('stop'); }
+
+  const onClick = (e: Event) => {
+    const t = e.target as Element | null;
+    const el = t && typeof t.closest === 'function' ? t.closest('[data-trace-guide]') : null;
+    if (!el) return;
+    e.preventDefault();
+    const m = el.getAttribute('data-trace-mode');
+    void play(el.getAttribute('data-trace-guide') ?? '', m === 'perform' || m === 'overlay' ? { mode: m } : {});
+  };
+  doc.addEventListener('click', onClick);
+
+  const ready: Promise<void> = (async () => {
+    let raw: unknown = opts.guides;
+    if (typeof opts.guides === 'string') {
+      const url = new URL(opts.guides, base).href;
+      base = url;
+      const r = await fetch(url);
+      if (!r.ok) throw new GuideError(`could not load the guides: HTTP ${r.status}`);
+      raw = await r.json();
+    }
+    const p = parseManifest(raw);
+    if (!p.ok) throw new GuideError(`invalid guides: ${p.errors.map((e) => `${e.path || '(root)'} ${e.message}`).join('; ')}`);
+    if (destroyed) return;
+    manifest = p.manifest;
+    emitter.emit('ready', { manifest });
+  })();
+  ready.catch((e) => { if (!destroyed) report(e instanceof Error ? e : new GuideError(String(e))); });
+
+  // A guide that was playing when the last page unloaded carries on here.
+  const active = store.get();
+  if (active && Date.now() - active.at < ACTIVE_MS) {
+    // One that can't carry on here is forgotten, so it isn't tried (and reported) on every page.
+    void play(active.id, { mode: active.mode }, true).then((c) => { if (!c && !current && !destroyed) store.clear(); });
+  }
+  else if (active) store.clear();
+
+  return {
+    ready,
+    get manifest() { return manifest; },
+    get playing() { return current; },
+    play: (id, o) => play(id, o),
+    stop,
+    list: (path) => (manifest ? guidesOn(manifest, path ?? where()) : []),
+    modes: (id) => { const g = manifest && findGuide(manifest, id); return g ? modesOf(g, performAllowed) : []; },
+    on: (ev, fn) => emitter.on(ev, fn),
+    launcher,
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      if (endTimer) clearTimeout(endTimer);
+      current?.controller.destroy();
+      current = null;
+      doc.removeEventListener('click', onClick);
+      launcher?.destroy();
+      emitter.clear();
+    },
+  };
+}

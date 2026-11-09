@@ -2,7 +2,7 @@
 // so the browser tests run the example exactly as written. Bundled by scripts/fixtures.mjs.
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { DoItForMe, ShowOrDo } from '../../../examples/react-demo/App';
+import { AppGuides, DoItForMe, ShowOrDo } from '../../../examples/react-demo/App';
 
 function Invoice() {
   const [customer, setCustomer] = useState('');
@@ -25,7 +25,7 @@ createRoot(document.getElementById('root')!).render(
   <>
     <Invoice />
     <nav data-trace-ignore>
-      {which === 'do' ? <DoItForMe goTo={(p) => w.paths.push(p)} resetDemo={async () => { w.resets += 1; }} /> : <ShowOrDo />}
+      {which === 'do' ? <DoItForMe goTo={(p) => w.paths.push(p)} resetDemo={async () => { w.resets += 1; }} /> : which === 'guides' ? <AppGuides goTo={(p) => w.paths.push(p)} /> : <ShowOrDo />}
     </nav>
   </>,
 );

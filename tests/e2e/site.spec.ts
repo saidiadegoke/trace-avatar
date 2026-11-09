@@ -10,6 +10,8 @@ test('the Pages site: root redirects to the playground, which plays its sample',
 });
 
 test('the Pages site: the example and the schema are published', async ({ page, request }) => {
+  await page.goto('/_site/examples/guides-html/');
+  await expect(page.locator('[data-trace-avatar=launcher]').locator('.fab')).toBeVisible();
   await page.goto('/_site/examples/vanilla-html/');
   await expect(page.locator('[data-trace-avatar]').locator('.bubble')).toHaveText(/Let’s create an invoice/);
   const schema = await request.get('/_site/schema/trace.v1.json');

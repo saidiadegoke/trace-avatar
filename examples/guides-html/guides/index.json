@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "guides": [
+    { "id": "create-invoice", "title": "Create an invoice", "trace": "create-invoice.trace.json", "modes": ["overlay", "perform"] },
+    { "id": "send-invoice", "title": "Send an invoice", "trace": "send-invoice.trace.json", "modes": ["overlay"] }
+  ]
+}

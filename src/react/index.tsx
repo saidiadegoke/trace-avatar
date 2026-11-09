@@ -6,6 +6,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createTrace } from '../index';
+import { mount } from '../auto/index';
+import type { GuidesController, MountOptions } from '../auto/index';
 import type { BlockedEvent, HandoffEvent, PageEvent, StalledEvent, StepEvent, TraceController, TraceOptions } from '../index';
 import type { Phase } from '../core/player';
 
@@ -82,5 +84,41 @@ export function useTrace(opts: UseTraceOptions): TraceController | null {
 /** Renders nothing itself: the overlay lives in its own shadow root on document.body. */
 export function TraceAvatar(props: UseTraceOptions): null {
   useTrace(props);
+  return null;
+}
+
+export interface TraceGuidesProps extends MountOptions {
+  /** Called with the guides controller once mounted (null when unmounted). */
+  onReady?: (guides: GuidesController | null) => void;
+  onError?: (e: Error) => void;
+}
+
+/** A stable key for the options that require remounting the guides. */
+export function guidesKey(o: MountOptions): string {
+  return JSON.stringify([o.guides, o.launcher ?? 'bottom-right', !!o.perform, o.controls ?? true, o.captions, o.rate, o.avatar]);
+}
+
+/**
+ * The loader as a component: a launcher with the manifest's guides, and data-trace-guide buttons.
+ * Renders nothing itself. Functions (navigate, prepare, onReset, currentPath) come from the latest render.
+ */
+export function TraceGuides(props: TraceGuidesProps): null {
+  const latest = useRef(props);
+  latest.current = props;
+  const key = guidesKey(props);
+  useEffect(() => {
+    const h = latest;
+    const g = mount({
+      ...props,
+      navigate: props.navigate ? (path) => h.current.navigate?.(path) : undefined,
+      prepare: props.prepare ? (requires, trace) => (h.current.prepare ? h.current.prepare(requires, trace) : true) : undefined,
+      onReset: props.onReset ? () => h.current.onReset?.() : undefined,
+      currentPath: props.currentPath ? () => (h.current.currentPath ?? (() => window.location.pathname))() : undefined,
+    });
+    const off = g.on('error', (e) => h.current.onError?.(e));
+    h.current.onReady?.(g);
+    return () => { off(); g.destroy(); h.current.onReady?.(null); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
   return null;
 }

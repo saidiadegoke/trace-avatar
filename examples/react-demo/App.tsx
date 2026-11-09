@@ -4,7 +4,7 @@
  *   import { createPerformer } from 'trace-avatar/perform';   // only for "Do it for me"
  */
 import { useState } from 'react';
-import { TraceAvatar, useTrace } from '../../src/react/index';
+import { TraceAvatar, TraceGuides, useTrace } from '../../src/react/index';
 import { createPerformer } from '../../src/perform/index';
 import type { Trace } from '../../src/index';
 
@@ -65,6 +65,19 @@ export function ShowOrDo() {
       <button type="button" onClick={() => setMode('overlay')}>Show me</button>
       <button type="button" onClick={() => setMode('perform')}>Do it for me</button>
       {mode && <TraceAvatar key={mode} trace={tour} mode={mode} performer={createPerformer} autoplay controls onEnd={() => setMode(null)} />}
+    </>
+  );
+}
+
+/**
+ * The whole app's guides at once: a corner launcher with every guide in the manifest, and any
+ * element with data-trace-guide="id" as a button. The player loads on the first play.
+ */
+export function AppGuides({ goTo }: { goTo: (path: string) => void }) {
+  return (
+    <>
+      <TraceGuides guides={{ version: 1, guides: [{ id: 'tour', title: 'Create an invoice', trace: tour, modes: ['overlay', 'perform'] }] }} perform navigate={goTo} />
+      <button type="button" data-trace-guide="tour">Show me how</button>
     </>
   );
 }

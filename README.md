@@ -47,7 +47,8 @@ Element-anchored, so it survives layout changes. Zero dependencies. Record a tra
 Show me or Do it for me.
 
 Try it locally: `npm i && npm run build && npm run serve`, then open
-`http://127.0.0.1:4173/examples/vanilla-html/` (switch between the two modes at the bottom left) or `/playground/`.
+`http://127.0.0.1:4173/examples/vanilla-html/` (switch between the two modes at the bottom left),
+`/examples/guides-html/` (a whole app's guides from one script tag), or `/playground/`.
 
 | | Show me (`mode: 'overlay'`) | Do it for me (`mode: 'perform'`) |
 |---|---|---|
@@ -141,6 +142,62 @@ document.querySelector('trace-avatar').hooks = { performer: createPerformer, nav
 Attributes: `src`, `controls`, `autoplay`, `rate`, `loop`, `captions`, `takeover`, `keyboard`, `avatar-name`, `avatar-image`, `avatar-color`,
 `mode`, `resume-key`. Events: `trace-step`, `trace-stalled`, `trace-page`, `trace-handoff`, `trace-blocked`,
 `trace-state`, `trace-end`, `trace-error`.
+
+## Guides for your whole app: one script tag
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/trace-avatar/dist/trace-auto.min.js"
+        data-guides="/guides/index.json" data-perform="true" defer></script>
+
+<button data-trace-guide="create-invoice">Show me how</button>
+<button data-trace-guide="create-invoice" data-trace-mode="perform">Do it for me</button>
+```
+
+A small round button in the corner lists the guides for the page the viewer is on: "Show me · Do it for me". Any
+element with `data-trace-guide="id"` starts one, including elements your framework renders later. While a guide
+plays, the corner button becomes **Stop guide**. A guide carries on after a full page load. The player is fetched
+on the first play, so until then the page pays about 5 KB.
+
+`/guides/index.json` lists the guides (schema: `trace-avatar/guides.schema.json`):
+
+```json
+{
+  "version": 1,
+  "guides": [
+    { "id": "create-invoice", "title": "Create an invoice", "trace": "create-invoice.trace.json",
+      "modes": ["overlay", "perform"], "pages": ["/app/invoices", "/app"] }
+  ]
+}
+```
+
+| Script attribute | Default | |
+|---|---|---|
+| `data-guides` | — | the manifest URL (trace URLs in it are relative to it) |
+| `data-launcher` | `bottom-right` | `bottom-left`, or `off` to hide the corner button and use your own buttons |
+| `data-perform` | `false` | `true` allows Do it for me, for guides whose `modes` include `"perform"` (both must agree) |
+
+Without `pages` a guide is offered on every page. Only guides in the manifest can play, by id.
+
+From npm, with your router and hooks:
+
+```js
+import { mount } from 'trace-avatar/auto';
+
+const guides = mount({
+  guides: '/guides/index.json',
+  perform: true,
+  navigate: (path) => router.push(path),
+  prepare: async () => isSignedIn(),
+  launcher: 'bottom-left',           // or false
+});
+guides.play('create-invoice', { mode: 'perform' });
+guides.on('error', (e) => console.warn(e.message));   // unknown ids, refused modes, load failures
+```
+
+React: `<TraceGuides guides="/guides/index.json" perform navigate={router.push} />` from `trace-avatar/react`.
+Custom element: `<trace-guides src="/guides/index.json" perform launcher="bottom-left">` from
+`trace-avatar/element` (events `guides-ready`, `guides-play`, `guides-end`, `guides-stop`, `guides-error`).
+Try it: `examples/guides-html/`.
 
 ## The trace format
 
@@ -325,7 +382,8 @@ Dark-mode colours apply automatically unless you set your own.
 ## Size
 
 About 14 KB min+brotli for the player (locators, overlay, controls, validation, pages, waits); perform mode is a
-separate 15 KB entry (player + hands) and the recorder a separate 8 KB one. `size-limit` guards each in CI.
+separate 15 KB entry (player + hands), the recorder a separate 8 KB one, and the guides loader about 5 KB until its
+first play. `size-limit` guards each in CI.
 
 ## Contributing
 

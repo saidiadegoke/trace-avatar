@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "meta": { "title": "Send an invoice" },
+  "avatar": { "name": "Sarah · Sales", "color": "#2456d8" },
+  "steps": [
+    { "type": "hover", "target": { "text": "Total" }, "hold": 1200, "say": "Check the total first." },
+    { "type": "click", "target": { "role": "button", "name": "Send invoice" }, "say": "Then send it." }
+  ]
+}

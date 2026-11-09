@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "guides": [
+    { "id": "invoice", "title": "Create an invoice", "trace": "invoice.trace.json", "modes": ["overlay", "perform"], "pages": ["/tests/e2e/fixtures/guides/app.html"] },
+    { "id": "two-pages", "title": "Finish on the next page", "trace": "two-pages.trace.json", "modes": ["perform"], "pages": ["/tests/e2e/fixtures/guides/app.html"] },
+    { "id": "elsewhere", "title": "Only on another page", "trace": "invoice.trace.json", "pages": ["/somewhere/else"] }
+  ]
+}

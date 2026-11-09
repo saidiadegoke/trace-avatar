@@ -10,6 +10,8 @@
 import { createTrace } from '../index';
 import type { Trace, TraceController, TraceOptions } from '../index';
 import type { CaptionMode } from '../shell/renderer.shadow';
+import { mount } from '../auto/index';
+import type { GuidesController, MountOptions } from '../auto/index';
 
 const BOOL = ['controls', 'autoplay', 'loop', 'keyboard'] as const;
 
@@ -103,6 +105,60 @@ export class TraceAvatarElement extends HTMLElement {
   }
 }
 
+/** Functions for <trace-guides>, set as its `hooks` property. */
+export type GuidesHooks = Pick<MountOptions, 'prepare' | 'onReset' | 'navigate' | 'currentPath'>;
+
+/**
+ * <trace-guides src="/guides/index.json" launcher="bottom-left" perform></trace-guides>
+ *
+ * The loader as an element. Events: guides-ready, guides-play, guides-end, guides-stop, guides-error.
+ */
+export class TraceGuidesElement extends HTMLElement {
+  static observedAttributes = ['src', 'launcher', 'perform', 'controls', 'captions', 'rate'];
+  private g: GuidesController | null = null;
+  private fns: GuidesHooks = {};
+
+  get guides(): GuidesController | null { return this.g; }
+  get hooks(): GuidesHooks { return this.fns; }
+  set hooks(h: GuidesHooks) { this.fns = { ...h }; if (this.isConnected) this.rebuild(); }
+
+  connectedCallback() { this.style.display = 'none'; this.rebuild(); }
+  disconnectedCallback() { this.g?.destroy(); this.g = null; }
+  attributeChangedCallback() { if (this.isConnected) this.rebuild(); }
+
+  /** Options read from attributes (exported for tests). */
+  options(): MountOptions | null {
+    const src = this.getAttribute('src');
+    if (!src) return null;
+    const l = (this.getAttribute('launcher') ?? '').toLowerCase();
+    const rate = Number(this.getAttribute('rate'));
+    return {
+      guides: src,
+      launcher: l === 'off' || l === 'false' || l === 'none' ? false : l === 'bottom-left' ? 'bottom-left' : 'bottom-right',
+      perform: this.hasAttribute('perform'),
+      controls: this.getAttribute('controls') !== 'false',
+      captions: (this.getAttribute('captions') as CaptionMode) || undefined,
+      rate: Number.isFinite(rate) && rate > 0 ? rate : undefined,
+      ...this.fns,
+    };
+  }
+
+  private rebuild() {
+    this.g?.destroy();
+    this.g = null;
+    const o = this.options();
+    if (!o) return;
+    const fire = (type: string, detail?: unknown) => this.dispatchEvent(new CustomEvent(type, { detail }));
+    const g = mount(o);
+    g.on('ready', (d) => fire('guides-ready', d));
+    g.on('play', (d) => fire('guides-play', d));
+    g.on('end', (d) => fire('guides-end', d));
+    g.on('stop', (d) => fire('guides-stop', d));
+    g.on('error', (d) => fire('guides-error', d));
+    this.g = g;
+  }
+}
+
 /** Register the element (again under another name if you like: a constructor can only be registered once). */
 export function define(name = 'trace-avatar') {
   if (typeof customElements === 'undefined' || customElements.get(name)) return;
@@ -111,3 +167,12 @@ export function define(name = 'trace-avatar') {
 }
 
 define();
+
+/** Register <trace-guides>. */
+export function defineGuides(name = 'trace-guides') {
+  if (typeof customElements === 'undefined' || customElements.get(name)) return;
+  const taken = customElements.getName?.(TraceGuidesElement) ?? (customElements.get('trace-guides') === TraceGuidesElement ? 'trace-guides' : null);
+  customElements.define(name, taken ? class extends TraceGuidesElement {} : TraceGuidesElement);
+}
+
+defineGuides();

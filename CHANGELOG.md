@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.3
+
+Guides for a whole app with one script tag.
+
+- Loader (`trace-avatar/auto`, CDN `trace-auto.min.js`): a guide manifest (`guides/index.json`, schema
+  `trace-avatar/guides.schema.json`, `validateManifest`), a corner launcher that lists the guides for the current
+  page ("Show me · Do it for me"), and `data-trace-guide="id"` (+ `data-trace-mode`) on any element. While a guide
+  plays the launcher is a Stop button; a guide carries on after a full page load.
+- Script attributes `data-guides`, `data-launcher` (`bottom-right` default, `bottom-left`, `off`), `data-perform`.
+  Do it for me is offered only when the manifest entry and the app both allow it.
+- `mount()` from npm, `<TraceGuides>` in `trace-avatar/react`, `<trace-guides>` in `trace-avatar/element`.
+  Errors (unknown ids, refused modes, load failures) go to `error` listeners, or the console when there are none.
+- The player is fetched on the first play. Budgets: the loader 5.5 KB (CDN and npm, before the first play).
+- New example: `examples/guides-html/` (one script tag); the React example adds `AppGuides`.
+
 ## 0.1.2
 
 Guides that do the work, and wait for the app to catch up.
