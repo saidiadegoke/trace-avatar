@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.10 (9 Nov 2026)
 
 - **Do it for me in rich-text editors:** typing now starts one task after the field is focused. Lexical (and
   editors like it) learns of its focus from `selectionchange`, a task of its own, so the first letters typed in the

@@ -1,6 +1,6 @@
 {
   "name": "trace-avatar",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Turn a list of steps into a smooth, human-looking ghost-cursor walkthrough on your real page. Element-anchored, zero dependencies.",
   "main": "./dist/index.cjs",
   "scripts": {
