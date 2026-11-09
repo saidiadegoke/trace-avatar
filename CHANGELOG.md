@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.8 (9 Nov 2026)
 
 - **Fix this step:** with `mount({ record })`, an author whose guide stalls on a step that can't find its element gets
   a card there: Fix this step (a guess, "Is it this?", from `chooseRepair`; `record.ai` only when unsure) or point at
