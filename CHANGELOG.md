@@ -13,6 +13,8 @@
 - Repair offers masked fields (by their label, never their value): a step may mean the password box. Ignored and
   blurred areas are still never offered.
 - Budgets: CDN loader 6.5 → 7 KB (the fix loader and the stalled hook); Fix this step 7 KB (6.63 KB).
+- Playground: the button says what it saves (Save as GIF / Save as video), and a recording starts on a fresh form in
+  Show me too (it used to start on whatever an earlier run had left).
 
 ## 0.1.7 (9 Nov 2026)
 

@@ -116,10 +116,22 @@ test.describe('Save as video', () => {
   });
 });
 
-test('the playground: Save as video downloads a GIF of the app, with progress', async ({ page }) => {
+test('the playground: the button says what it saves', async ({ page }) => {
+  await page.goto('/playground/');
+  await expect(page.locator('#save-video')).toHaveText('Save as GIF');
+  await page.selectOption('#export-format', 'video');
+  await expect(page.locator('#save-video')).toHaveText('Save as video');
+  await page.selectOption('#export-format', 'gif');
+  await expect(page.locator('#save-video')).toHaveText('Save as GIF');
+});
+
+test('the playground: Save as GIF downloads a GIF of the app from a fresh form, with progress', async ({ page }) => {
   await fakeShare(page, 'ok', '.app');
   await page.goto('/playground/');
   await expect(page.locator('#json')).not.toHaveValue('');
+  // Left over from an earlier run: the recording must not start on it.
+  await page.evaluate(() => { const i = document.querySelector<HTMLInputElement>('.app input'); if (i) i.value = 'left over'; });
+  await expect(page.locator('#mode')).toHaveValue('overlay'); // Show me never types, so what the form holds after is what it started with
   const saw: string[] = [];
   const watch = setInterval(() => { void page.locator('#status').textContent().then((t) => { if (t) saw.push(t); }).catch(() => {}); }, 200);
   const download = page.waitForEvent('download', { timeout: 60_000 });
@@ -129,6 +141,7 @@ test('the playground: Save as video downloads a GIF of the app, with progress', 
   expect(d.suggestedFilename()).toMatch(/\.gif$/);
   await expect(page.locator('#status')).toContainText(/Saved .*\.gif \(\d+\.\d s, \d+ KB\)/);
   expect(saw.some((t) => t.startsWith('Recording…'))).toBe(true);
+  await expect(page.locator('.app input').first()).not.toHaveValue('left over');
   await expect(page.locator('#save-video')).toBeEnabled();
 });
 

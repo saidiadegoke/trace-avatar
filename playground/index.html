@@ -60,7 +60,7 @@
         <option value="gif">GIF</option>
         <option value="video">Video</option>
       </select>
-      <button id="save-video" class="ghost" title="Plays the guide from the start and records the app (your browser asks to share this tab)">Save as video</button>
+      <button id="save-video" class="ghost" title="Plays the guide from the start and records the app (your browser asks to share this tab)">Save as GIF</button>
     </div>
     <div id="status" role="status" aria-live="polite"></div>
   </aside>
@@ -143,19 +143,24 @@
       a.click();
       URL.revokeObjectURL(a.href);
     });
-    // Save as video: a fresh run of the guide from step 1, without the player's controls, cropped to the app.
+    // The button says what it saves.
+    const exportFormat = document.getElementById('export-format');
+    const saveLabel = () => { document.getElementById('save-video').textContent = exportFormat.value === 'gif' ? 'Save as GIF' : 'Save as video'; };
+    exportFormat.addEventListener('change', saveLabel);
+    saveLabel();
+    // Save as GIF / video: a fresh run of the guide from step 1, on a fresh form, without the player's controls, cropped to the app.
     document.getElementById('save-video').addEventListener('click', async (ev) => {
       const raw = read();
       if (!raw) return;
       const button = ev.currentTarget;
       current?.destroy();
       const mode = document.getElementById('mode').value;
-      if (mode === 'perform') window.clearForm();
+      window.clearForm();   // the recording starts from step 1, so the app starts fresh too (in Show me as well)
       current = TraceAvatar.createTrace({ trace: raw, controls: false, autoplay: false, mode, onReset: window.clearForm });
       button.disabled = true;
       try {
         const v = await TraceAvatarExport.saveVideo(current, {
-          format: document.getElementById('export-format').value,
+          format: exportFormat.value,
           area: document.querySelector('.app'),
           onProgress: (p) => say(p.phase === 'asking' ? 'Choose this tab to share, then the guide plays from the start…'
             : p.phase === 'recording' ? `Recording… ${((p.ms || 0) / 1000).toFixed(1)} s` : 'Encoding…'),
