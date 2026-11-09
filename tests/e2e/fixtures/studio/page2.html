@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Studio page 2</title></head>
+<body style="font:15px system-ui;padding:120px 40px 40px">
+  <h1>Page 2</h1>
+  <button id="finish">Finish</button>
+  <div id="done"></div>
+  <script>
+    document.getElementById('finish').addEventListener('click', () => { document.getElementById('done').textContent = 'Finished'; });
+  </script>
+  <script src="/dist/trace-auto.min.js"></script>
+  <script src="/tests/e2e/fixtures/studio/setup.js"></script>
+</body></html>

@@ -108,13 +108,21 @@ test('playground, Do it for me: plays the sample for real, and hands a masked fi
   await page.fill('#customer', ''); // the run above filled it
   await page.fill('#amount', '');
   await page.click('#record');
+  const studio = page.locator('[data-trace-avatar=studio]');
+  await studio.getByRole('button', { name: 'Got it' }).click();
   await page.click('#customer');
   await page.keyboard.type('Ada');
   await page.click('#amount');
   await page.keyboard.type('5000');
   await page.click('#send');
-  await page.click('#record');
+  await studio.getByRole('button', { name: '■ Stop' }).click();
+  const review = studio.getByRole('dialog', { name: 'Review the guide' });
+  await review.getByRole('textbox', { name: 'Title' }).fill('Recorded in the playground');
+  await review.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText(/Saved \d+ steps to the editor/);
+  await review.getByRole('button', { name: 'Close the studio' }).click();
   const json = JSON.parse(await page.locator('#json').inputValue());
+  expect(json.meta.title).toBe('Recorded in the playground');
   expect(json.steps.find((x: { mask?: boolean }) => x.mask)).toMatchObject({ type: 'type', target: { sel: '#amount' } });
   await page.click('#play'); // still Do it for me: the form is cleared first
   await expect(page.locator('#status')).toHaveText(/your turn/, { timeout: 15_000 });

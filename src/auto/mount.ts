@@ -17,12 +17,31 @@ import { createEmitter } from '../shell/emitter';
 import { createLauncher } from '../shell/launcher.dom';
 import type { Launcher, LauncherPosition } from '../shell/launcher.dom';
 import type { CaptionMode } from '../shell/renderer.shadow';
+import { matchShortcut } from '../core/shortcut';
+import { studioWaiting } from '../core/studio-keys';
+import type { Studio, StudioOptions } from '../studio/studio.dom';
 
 export interface PlayerModule { createTrace(o: TraceOptions): TraceController }
+export interface StudioModule { createStudio(o: StudioOptions): Studio }
 
 export interface Loaders {
   /** The player that plays both modes (trace-avatar/perform). */
   player(): Promise<PlayerModule>;
+  /** The studio (trace-avatar/studio), loaded only for an author who may record. */
+  studio?: () => Promise<StudioModule>;
+}
+
+export interface RecordOptions {
+  /** Who may record guides. Checked before the studio is loaded; trace-avatar never decides this. */
+  allowed: () => boolean | Promise<boolean>;
+  /** Where a recorded guide goes (your API, a CMS, a pull request). Default: a download. */
+  save?: StudioOptions['save'];
+  /** Copied to each guide's meta.requires, e.g. ['signed-in']. */
+  requires?: string[];
+  /** Mask typed text unless the author reveals a field. Default true. */
+  maskByDefault?: boolean;
+  /** The shortcut that starts recording. Default 'Alt+Shift+R'; false turns it off. */
+  shortcut?: string | false;
 }
 
 export interface MountOptions {
@@ -48,6 +67,11 @@ export interface MountOptions {
   links?: boolean | 'overlay';
   /** The link parameter. Default 'trace' (and 'trace-mode'). */
   linkParam?: string;
+  /**
+   * Let authors record guides in the app (the studio): "Record a guide" in the launcher, a shortcut
+   * and `?trace-record=1`, all only when `allowed()` says yes.
+   */
+  record?: RecordOptions;
   /** Where buttons are looked for and the launcher goes. Default: document. */
   doc?: Document;
 }
@@ -80,6 +104,10 @@ export interface GuidesController {
   link(id: string, o?: { mode?: GuideMode; path?: string }): string;
   on<K extends keyof GuidesEvents>(ev: K, fn: (d: GuidesEvents[K]) => void): () => void;
   readonly launcher: Launcher | null;
+  /** Open the studio and start recording (when `record.allowed()` says yes). */
+  record(): Promise<Studio | null>;
+  /** The open studio. */
+  readonly studio: Studio | null;
   destroy(): void;
 }
 
@@ -106,6 +134,8 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
   let endTimer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
   let player: Promise<PlayerModule> | null = null;
+  let studio: Studio | null = null;
+  let opening: Promise<Studio | null> | null = null;
 
   const where = (): string | undefined => {
     try { return opts.currentPath ? opts.currentPath() : win?.location?.pathname; } catch { return undefined; }
@@ -299,6 +329,62 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     else void fromLink();
   });
 
+  // ── Recording guides (the studio) ────────────────────────────────────────
+  const rec = opts.record;
+  const mayRecord = async (): Promise<boolean> => {
+    if (!rec || !loaders.studio) return false;
+    try { return !!(await rec.allowed()); } catch { return false; }
+  };
+  /** Open the studio (loading it the first time); `start` begins a recording when none is going on. */
+  function openStudio(start: boolean): Promise<Studio | null> {
+    if (studio) { if (start && studio.state !== 'recording' && studio.state !== 'paused') studio.start(); return Promise.resolve(studio); }
+    return (opening ??= (async () => {
+      try {
+        if (!(await mayRecord()) || destroyed) return null;
+        let mod: StudioModule;
+        try { mod = await loaders.studio!(); } catch (e) { fail(`could not load the studio: ${(e as Error).message}`); return null; }
+        if (destroyed) return null;
+        if (start) clearCurrent(current ? 'stop' : null);
+        const s = mod.createStudio({
+          doc,
+          perform: performAllowed,
+          ...(rec!.save ? { save: rec!.save } : {}),
+          ...(rec!.requires ? { requires: rec!.requires } : {}),
+          ...(rec!.maskByDefault !== undefined ? { maskByDefault: rec!.maskByDefault } : {}),
+          ...(opts.avatar ? { avatar: opts.avatar } : {}),
+          ...(opts.navigate ? { navigate: opts.navigate } : {}),
+          ...(opts.prepare ? { prepare: opts.prepare } : {}),
+          ...(opts.onReset ? { onReset: opts.onReset } : {}),
+          ...(opts.currentPath ? { currentPath: opts.currentPath } : {}),
+          onClose: () => { if (studio === s) studio = null; },
+        });
+        studio = s;
+        if (start && s.state !== 'recording' && s.state !== 'paused') s.start();
+        return s;
+      } finally { opening = null; }
+    })());
+  }
+  const onKey = (e: KeyboardEvent) => {
+    const sc = rec?.shortcut ?? 'Alt+Shift+R';
+    if (!sc || e.repeat || !matchShortcut(sc, e, /Mac|iPhone|iPad/.test(win?.navigator?.platform ?? ''))) return;
+    e.preventDefault();
+    void openStudio(true);
+  };
+  if (rec && win) {
+    if (rec.shortcut !== false) doc.addEventListener('keydown', onKey);
+    void mayRecord().then((ok) => { if (ok && !destroyed) launcher?.setRecord(() => { void openStudio(true); }); });
+    // ?trace-record=1 (a convenience: it still needs allowed()), taken out of the address like a link.
+    const url = new URL(win.location.href);
+    const recParam = `${param}-record`;
+    const asked = url.searchParams.has(recParam);
+    if (asked) {
+      url.searchParams.delete(recParam);
+      try { win.history.replaceState(win.history.state, '', url.href); } catch { /* sandboxed */ }
+    }
+    // A recording or a review going on when the last page unloaded carries on here.
+    if (asked || studioWaiting((k) => win.sessionStorage.getItem(k))) void openStudio(asked);
+  }
+
   return {
     ready,
     get manifest() { return manifest; },
@@ -310,9 +396,14 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     link,
     on: (ev, fn) => emitter.on(ev, fn),
     launcher,
+    record: () => openStudio(true),
+    get studio() { return studio; },
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      doc.removeEventListener('keydown', onKey);
+      studio?.destroy();
+      studio = null;
       if (endTimer) clearTimeout(endTimer);
       current?.controller.destroy();
       current = null;

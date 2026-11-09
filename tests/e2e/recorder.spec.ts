@@ -78,16 +78,23 @@ test('ignores the overlay and [data-trace-ignore] while recording', async ({ pag
   expect(trace.steps.map((s: { target?: { sel: string } }) => s.target?.sel)).toEqual(['#settings']);
 });
 
-test('playground: record, then play the recording back', async ({ page }) => {
+test('playground: record in the studio, save to the editor, then play the recording back', async ({ page }) => {
   await page.goto('/playground/');
   await page.click('#record');
   await expect(page.locator('#status')).toHaveText(/Recording/);
+  const studio = page.locator('[data-trace-avatar=studio]');
+  await studio.getByRole('button', { name: 'Got it' }).click();
   await page.click('[data-testid=new-invoice]');
   await page.click('#customer');
   await page.keyboard.type('Ada');
   await page.click('#send');
-  await page.click('#record');
-  await expect(page.locator('#status')).toHaveText(/Recorded 4 steps/);
+  await studio.getByRole('button', { name: '■ Stop' }).click();
+  const review = studio.getByRole('dialog', { name: 'Review the guide' });
+  await expect(review.getByRole('listitem')).toHaveCount(4);
+  await review.getByRole('textbox', { name: 'Title' }).fill('Recorded in the playground');
+  await review.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText(/Saved 4 steps/);
+  await review.getByRole('button', { name: 'Close the studio' }).click();
   const json = JSON.parse(await page.locator('#json').inputValue());
   expect(json.steps.map((x: { type: string }) => x.type)).toEqual(['click', 'click', 'type', 'click']);
   expect(json.steps[2]).toMatchObject({ type: 'type', text: 'Ada' });

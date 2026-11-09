@@ -1,6 +1,6 @@
 {
   "name": "trace-avatar",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Turn a list of steps into a smooth, human-looking ghost-cursor walkthrough on your real page. Element-anchored, zero dependencies.",
   "main": "./dist/index.cjs",
   "scripts": {
@@ -80,6 +80,11 @@
       "import": "./dist/auto.js",
       "require": "./dist/auto.cjs"
     },
+    "./studio": {
+      "types": "./dist/studio.d.ts",
+      "import": "./dist/studio.js",
+      "require": "./dist/studio.cjs"
+    },
     "./schema.json": "./schema/trace.v1.json",
     "./guides.schema.json": "./schema/guides.v1.json",
     "./package.json": "./package.json",
@@ -124,7 +129,8 @@
       "import": "{ TraceGuides }",
       "ignore": [
         "react",
-        "./perform.js"
+        "./perform.js",
+        "./studio.js"
       ],
       "limit": "6.5 KB"
     },
@@ -154,8 +160,23 @@
       "import": "{ mount }",
       "limit": "6.5 KB",
       "ignore": [
-        "./perform.js"
+        "./perform.js",
+        "./studio.js"
       ]
+    },
+    {
+      "name": "studio (recorder + toolbar + review; the player loads on first test play)",
+      "path": "dist/studio.js",
+      "import": "{ createStudio }",
+      "ignore": [
+        "./perform.js"
+      ],
+      "limit": "14.5 KB"
+    },
+    {
+      "name": "studio CDN (trace-studio.min.js)",
+      "path": "dist/trace-studio.min.js",
+      "limit": "14.5 KB"
     }
   ],
   "homepage": "https://saidiadegoke.github.io/trace-avatar/",

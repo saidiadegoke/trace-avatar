@@ -30,6 +30,7 @@ Where things live:
 | `src/index.ts` | the facade: `createTrace`, events, `prepare` / `onReset` / `resumeKey`, running effects |
 | `src/perform/` | the Do it for me entry: re-exports everything and wires in the hands |
 | `src/auto/` | the guides loader: `mount.ts` (manifest, launcher, buttons, carrying on) takes its chunk loaders as arguments; `index.ts` (npm, `import()`) and `cdn.ts` (script tag) pass them. The manifest is `src/core/manifest.ts`, the launcher `src/shell/launcher.dom.ts` |
+| `src/studio/` | the studio: `studio.dom.ts` (toolbar, pickers, review panel, test play, carrying on) takes the player loader as an argument; `index.ts` (npm) and `cdn.ts` (script tag) pass it. The pure parts are `src/core/review.ts`, `src/core/shortcut.ts` and `src/core/studio-keys.ts` (which the loader reads without loading the studio) |
 | `src/react/`, `src/element/` | adapters; both pass `mode` and `performer` through |
 | `examples/`, `playground/` | both offer both modes; keep it that way when you add an example |
 

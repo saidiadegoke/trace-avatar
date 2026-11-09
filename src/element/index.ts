@@ -106,7 +106,7 @@ export class TraceAvatarElement extends HTMLElement {
 }
 
 /** Functions for <trace-guides>, set as its `hooks` property. */
-export type GuidesHooks = Pick<MountOptions, 'prepare' | 'onReset' | 'navigate' | 'currentPath'>;
+export type GuidesHooks = Pick<MountOptions, 'prepare' | 'onReset' | 'navigate' | 'currentPath' | 'record'>;
 
 /**
  * <trace-guides src="/guides/index.json" launcher="bottom-left" perform links="overlay"></trace-guides>

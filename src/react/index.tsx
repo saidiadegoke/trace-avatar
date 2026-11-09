@@ -95,12 +95,15 @@ export interface TraceGuidesProps extends MountOptions {
 
 /** A stable key for the options that require remounting the guides. */
 export function guidesKey(o: MountOptions): string {
-  return JSON.stringify([o.guides, o.launcher ?? 'bottom-right', !!o.perform, o.controls ?? true, o.captions, o.rate, o.avatar, o.links ?? true, o.linkParam ?? 'trace']);
+  const r = o.record;
+  return JSON.stringify([o.guides, o.launcher ?? 'bottom-right', !!o.perform, o.controls ?? true, o.captions, o.rate, o.avatar, o.links ?? true, o.linkParam ?? 'trace',
+    r ? [!!r.save, r.requires, r.maskByDefault, r.shortcut] : null]);
 }
 
 /**
  * The loader as a component: a launcher with the manifest's guides, and data-trace-guide buttons.
- * Renders nothing itself. Functions (navigate, prepare, onReset, currentPath) come from the latest render.
+ * Renders nothing itself. Functions (navigate, prepare, onReset, currentPath, record.allowed, record.save)
+ * come from the latest render.
  */
 export function TraceGuides(props: TraceGuidesProps): null {
   const latest = useRef(props);
@@ -114,6 +117,11 @@ export function TraceGuides(props: TraceGuidesProps): null {
       prepare: props.prepare ? (requires, trace) => (h.current.prepare ? h.current.prepare(requires, trace) : true) : undefined,
       onReset: props.onReset ? () => h.current.onReset?.() : undefined,
       currentPath: props.currentPath ? () => (h.current.currentPath ?? (() => window.location.pathname))() : undefined,
+      record: props.record ? {
+        ...props.record,
+        allowed: () => h.current.record?.allowed() ?? false,
+        save: props.record.save ? (t, e) => h.current.record?.save?.(t, e) : undefined,
+      } : undefined,
     });
     const off = g.on('error', (e) => h.current.onError?.(e));
     h.current.onReady?.(g);

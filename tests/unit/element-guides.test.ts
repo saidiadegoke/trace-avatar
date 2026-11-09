@@ -56,11 +56,13 @@ describe('<trace-guides>', () => {
     for (const k of ['ready', 'play', 'end', 'stop', 'error']) calls[0].fns[k](k);
     expect(seen).toEqual(['guides-ready:ready', 'guides-play:play', 'guides-end:end', 'guides-stop:stop', 'guides-error:error']);
     const navigate = vi.fn();
-    el.hooks = { navigate };
-    expect(el.hooks).toEqual({ navigate });
+    const record = { allowed: () => true };
+    el.hooks = { navigate, record };
+    expect(el.hooks).toEqual({ navigate, record });
     expect(calls).toHaveLength(2);
     expect(calls[0].destroyed).toBe(true);
     expect(calls[1].opts.navigate).toBe(navigate);
+    expect(calls[1].opts.record).toBe(record);
     el.setAttribute('perform', '');
     expect(calls).toHaveLength(3);
     el.remove();

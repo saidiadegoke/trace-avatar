@@ -9,10 +9,10 @@
  * PURE.
  */
 
-import type { Avatar, Meta, Step, Target, Trace } from './format';
+import type { Avatar, Meta, Step, Target, Trace, Until } from './format';
 import { simplify } from './motion';
 
-export type DraftKind = 'click' | 'dblclick' | 'type' | 'key' | 'scroll' | 'note';
+export type DraftKind = 'click' | 'dblclick' | 'type' | 'key' | 'scroll' | 'note' | 'wait';
 
 export interface Draft {
   kind: DraftKind;
@@ -27,9 +27,11 @@ export interface Draft {
   to?: { x?: number; y?: number };
   /** The page it happened on (a pattern, ids as `*`). */
   page?: string;
-  /** A note's caption (a note is added by the recorder, e.g. after a sign-in on another site). */
+  /** A caption: a note's text, or one the author added to a step while recording. */
   say?: string;
   pause?: boolean;
+  /** `wait`: what to wait for. */
+  until?: Until;
 }
 
 export const MERGE = { dblclickMs: 500, typeGapMs: 2000, scrollGapMs: 300 } as const;
@@ -58,13 +60,13 @@ export function coalesce(drafts: readonly Draft[]): Draft[] {
     }
     // Keystrokes into one field become one type step with the final text.
     if (d.kind === 'type' && last && last.d.kind === 'type' && last.d.key === d.key && d.t - last.lastT <= MERGE.typeGapMs) {
-      last.d = { ...last.d, text: d.text, mask: d.mask };
+      last.d = { ...last.d, text: d.text, mask: d.mask, ...(d.say ? { say: d.say } : {}) };
       last.lastT = d.t;
       continue;
     }
     // One scroll gesture becomes one step to where it ended.
     if (d.kind === 'scroll' && last && last.d.kind === 'scroll' && last.d.key === d.key && d.t - last.lastT <= MERGE.scrollGapMs) {
-      last.d = { ...last.d, to: d.to };
+      last.d = { ...last.d, to: d.to, ...(d.say ? { say: d.say } : {}) };
       last.lastT = d.t;
       continue;
     }
@@ -86,7 +88,7 @@ export function pruneScrolls(drafts: readonly Draft[], mode: ScrollMode = 'auto'
   let run: Draft[] = [];
   const flush = (nextDraft: Draft | undefined) => {
     if (!run.length) return;
-    const revealed = nextDraft && (TARGETED.has(nextDraft.kind) || (nextDraft.kind === 'key' && !!nextDraft.target));
+    const revealed = nextDraft && (TARGETED.has(nextDraft.kind) || ((nextDraft.kind === 'key' || nextDraft.kind === 'wait') && !!nextDraft.target));
     if (!revealed) {
       const last = new Map<string, Draft>();
       for (const d of run) { const k = d.key ?? 'window'; last.delete(k); last.set(k, d); }
@@ -129,6 +131,12 @@ export function gapMap(anchors: readonly number[], maxGapMs: number = GAPS.maxGa
 }
 
 function toStep(d: Draft): Step {
+  const step = stepOf(d);
+  if (d.say && d.kind !== 'note') step.say = d.say;
+  return step;
+}
+
+function stepOf(d: Draft): Step {
   const t = Math.round(d.t);
   switch (d.kind) {
     case 'click':
@@ -142,6 +150,8 @@ function toStep(d: Draft): Step {
       return { type: 'scroll', t, to: d.to ?? {}, ...(d.target ? { target: d.target } : {}) };
     case 'note':
       return { type: 'note', t, say: d.say!, ...(d.pause ? { pause: true } : {}) };
+    case 'wait':
+      return { type: 'wait', t, until: d.until!, ...(d.target ? { target: d.target } : {}) };
     default: {
       const never: never = d.kind;
       return never;
@@ -166,7 +176,7 @@ export interface BuildInput {
 /** Build a trace, or null when nothing worth replaying was recorded. */
 export function build(input: BuildInput): Trace | null {
   const kept = pruneScrolls(
-    coalesce(input.drafts).filter((d) => (d.kind === 'key' ? !!d.keys : d.kind === 'scroll' ? true : d.kind === 'note' ? !!d.say : !!d.target)),
+    coalesce(input.drafts).filter((d) => (d.kind === 'key' ? !!d.keys : d.kind === 'scroll' ? true : d.kind === 'note' ? !!d.say : d.kind === 'wait' ? !!d.until : !!d.target)),
     input.scrolls,
   );
   if (!kept.length) return null;

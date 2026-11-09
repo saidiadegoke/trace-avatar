@@ -534,3 +534,140 @@ describe('mount: links', () => {
     expect(copyBtn.textContent).toBe('Copy failed');
   });
 });
+
+describe('mount: recording guides (record)', () => {
+  type FakeStudio = { state: string; started: number; destroyed: boolean; opts: Record<string, unknown>; start(): void; destroy(): void };
+  function fakeStudio(o: { fail?: boolean } = {}) {
+    const made: FakeStudio[] = [];
+    const load = vi.fn(async () => {
+      if (o.fail) throw new Error('offline');
+      return {
+        createStudio(opts: Record<string, unknown>) {
+          const s: FakeStudio = {
+            state: 'idle', started: 0, destroyed: false, opts,
+            start() { s.started += 1; s.state = 'recording'; },
+            destroy() { s.destroyed = true; },
+          };
+          made.push(s);
+          return s as never;
+        },
+      };
+    });
+    return { made, load };
+  }
+  const goRec = (record: MountOptions['record'], st = fakeStudio(), o: Partial<MountOptions> = {}, p = fakePlayer()) => {
+    const g = mount({ guides: MANIFEST, record, ...o }, { player: p.load, studio: st.load });
+    mounted.push(g);
+    return { g, st, p };
+  };
+  const menu = (g: GuidesController) => { g.launcher!.open(); return Array.from(g.launcher!.host.shadowRoot!.querySelectorAll('.menu button')).map((b) => b.textContent); };
+  const key = (o: KeyboardEventInit) => document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...o }));
+
+  it('without record, or when allowed() says no (or throws), nothing loads and nothing is offered', async () => {
+    const none = goRec(undefined);
+    await tick();
+    expect(menu(none.g)).not.toContain('● Record a guide');
+    expect(await none.g.record()).toBeNull();
+    const no = goRec({ allowed: () => false });
+    const bad = goRec({ allowed: () => { throw new Error('x'); } });
+    await tick();
+    expect(menu(no.g)).not.toContain('● Record a guide');
+    key({ key: 'R', code: 'KeyR', altKey: true, shiftKey: true });
+    await tick();
+    expect(await no.g.record()).toBeNull();
+    expect(await bad.g.record()).toBeNull();
+    expect(no.st.load).not.toHaveBeenCalled();
+    expect(bad.st.load).not.toHaveBeenCalled();
+    expect(none.st.load).not.toHaveBeenCalled();
+  });
+
+  it('allowed: "Record a guide" in the launcher opens the studio and starts; it is passed the app hooks', async () => {
+    const save = vi.fn();
+    const navigate = vi.fn();
+    const { g, st, p } = goRec({ allowed: async () => true, save, requires: ['signed-in'], maskByDefault: false }, fakeStudio(), { perform: true, navigate });
+    await tick();
+    expect(menu(g)).toContain('● Record a guide');
+    const r = Array.from(g.launcher!.host.shadowRoot!.querySelectorAll('.menu button')).find((b) => b.textContent === '● Record a guide') as HTMLElement;
+    await g.play('inline');
+    r.click();
+    await tick();
+    expect(st.made).toHaveLength(1);
+    expect(st.made[0].started).toBe(1);
+    expect(st.made[0].opts).toMatchObject({ save, requires: ['signed-in'], maskByDefault: false, perform: true, navigate, doc: document });
+    expect(g.studio).toBe(st.made[0]);
+    expect(p.made[0].ctl.destroyed).toBe(true); // recording stops the guide that was playing
+    // Asked again: the same studio, no second start while recording.
+    expect(await g.record()).toBe(st.made[0]);
+    expect(st.made[0].started).toBe(1);
+    // Closed: the next record() makes a new one.
+    (st.made[0].opts.onClose as () => void)();
+    expect(g.studio).toBeNull();
+    await g.record();
+    expect(st.made).toHaveLength(2);
+  });
+
+  it('Alt+Shift+R starts recording (by the physical key); another shortcut, or none', async () => {
+    const a = goRec({ allowed: () => true });
+    key({ key: '®', code: 'KeyR', altKey: true, shiftKey: true });
+    await tick();
+    expect(a.st.made).toHaveLength(1);
+    a.g.destroy();
+    expect(a.st.made[0].destroyed).toBe(true);
+    key({ key: 'R', code: 'KeyR', altKey: true, shiftKey: true });
+    await tick();
+    expect(a.st.load).toHaveBeenCalledTimes(1);
+
+    const b = goRec({ allowed: () => true, shortcut: 'Ctrl+Shift+9' });
+    key({ key: 'R', code: 'KeyR', altKey: true, shiftKey: true });
+    await tick();
+    expect(b.st.made).toHaveLength(0);
+    key({ key: '(', code: 'Digit9', ctrlKey: true, shiftKey: true });
+    await tick();
+    expect(b.st.made).toHaveLength(1);
+    b.g.destroy();
+
+    const c = goRec({ allowed: () => true, shortcut: false });
+    key({ key: 'R', code: 'KeyR', altKey: true, shiftKey: true });
+    await tick();
+    expect(c.st.made).toHaveLength(0);
+  });
+
+  it('?trace-record=1 is taken out of the address and starts recording, only when allowed', async () => {
+    history.replaceState({}, '', '/app?x=1&trace-record=1#h');
+    const { st } = goRec({ allowed: () => true });
+    expect(location.pathname + location.search + location.hash).toBe('/app?x=1#h');
+    await tick();
+    expect(st.made[0].started).toBe(1);
+    history.replaceState({}, '', '/app?trace-record=1');
+    const no = goRec({ allowed: () => false });
+    expect(location.search).toBe('');
+    await tick();
+    expect(no.st.load).not.toHaveBeenCalled();
+  });
+
+  it('a recording or review from the last page reopens the studio (without starting a new one)', async () => {
+    sessionStorage.setItem('trace-avatar:studio:review', '{"trace":{},"draft":{}}');
+    const { st } = goRec({ allowed: () => true });
+    await tick();
+    expect(st.made).toHaveLength(1);
+    expect(st.made[0].started).toBe(0);
+    sessionStorage.clear();
+    sessionStorage.setItem('trace-avatar:rec:studio', '{}');
+    const no = goRec({ allowed: () => false });
+    await tick();
+    expect(no.st.load).not.toHaveBeenCalled();
+  });
+
+  it('a studio that cannot load is reported', async () => {
+    const { g } = goRec({ allowed: () => true }, fakeStudio({ fail: true }));
+    const errors: Error[] = [];
+    g.on('error', (e) => errors.push(e));
+    expect(await g.record()).toBeNull();
+    expect(errors[0].message).toBe('could not load the studio: offline');
+  });
+
+  it('the npm entry loads the studio with import()', async () => {
+    const mod = await defaultLoaders.studio!();
+    expect(typeof mod.createStudio).toBe('function');
+  });
+});

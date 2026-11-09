@@ -12,7 +12,7 @@
 import { build } from '../core/build';
 import type { Draft, ScrollMode } from '../core/build';
 import { parse } from '../core/format';
-import type { Avatar, Trace } from '../core/format';
+import type { Avatar, Trace, Until } from '../core/format';
 import { isSecret, maskText, shouldMask } from '../core/mask';
 import type { FieldFacts } from '../core/mask';
 import { next, recClock, recElapsed, recPause, recResume } from '../core/recorder-state';
@@ -75,8 +75,17 @@ export interface Recorder {
   readonly count: number;
   /** It carried on with a recording from the last page (persistKey). */
   readonly restored: boolean;
+  /** Recording time so far (ms, pauses excluded). */
+  readonly elapsed: number;
+  /** Put a caption on the last step (a note step when there is none yet). */
+  caption(say: string): void;
+  /** Add a wait: until `el`'s text (the page's, without `el`) shows `until.text`, or `el` is gone. */
+  waitFor(el: Element | null, until: Until): void;
+  /** Mask or reveal one field for this recording (null: its default). Returns whether its text will be masked. */
+  mark(el: Element, how: 'mask' | 'reveal' | null): boolean;
   on<K extends keyof RecorderEvents>(ev: K, fn: (d: RecorderEvents[K]) => void): () => void;
-  destroy(): void;
+  /** Stop listening. With `keep` (and a persistKey) the recording stays kept for the next recorder to carry on. */
+  destroy(o?: { keep?: boolean }): void;
 }
 
 const SKIP_INPUT_TYPES = new Set(['checkbox', 'radio', 'range', 'file', 'button', 'submit', 'reset', 'image', 'color']);
@@ -135,6 +144,12 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
   const storeKey = opts.persistKey ? `trace-avatar:rec:${opts.persistKey}` : null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   const ids = new WeakMap<object, string>();
+  const marks = new WeakMap<Element, 'mask' | 'reveal'>();
+  const factsFor = (el: Element) => {
+    const f = factsOf(el);
+    const m = marks.get(el);
+    return m ? { ...f, marked: m === 'mask', revealed: m === 'reveal' } : f;
+  };
   let nextId = 0;
   const keyOf = (o: object) => { let k = ids.get(o); if (!k) { nextId += 1; k = `e${nextId}`; ids.set(o, k); } return k; };
 
@@ -211,7 +226,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
       value = el.value;
     } else if (el.isContentEditable) value = el.textContent ?? '';
     else return;
-    const facts = factsOf(el);
+    const facts = factsFor(el);
     const masked = el instanceof win.HTMLSelectElement ? isSecret(facts) : shouldMask(facts, opts.maskByDefault ?? true);
     add({ kind: 'type', t: t(), key: keyOf(el), target: buildTarget(el, { root }), text: masked ? maskText(value) : value, ...(masked ? { mask: true } : {}) });
   };
@@ -334,10 +349,25 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
     get state() { return state; },
     get count() { return drafts.length; },
     get restored() { return restored; },
+    get elapsed() { return state === 'idle' ? 0 : Math.round(t()); },
+    caption(say) {
+      const text = say.trim();
+      if (!text || (state !== 'recording' && state !== 'paused')) return;
+      const last = drafts[drafts.length - 1];
+      if (last && last.kind !== 'note') { last.say = text; emitter.emit('draft', last); save(); } else add({ kind: 'note', t: t(), say: text });
+    },
+    waitFor(el, until) {
+      if (state !== 'recording' && state !== 'paused') return;
+      add({ kind: 'wait', t: t(), until, ...(el ? { key: keyOf(el), target: buildTarget(el, { root }) } : {}) });
+    },
+    mark(el, how) {
+      if (how) marks.set(el, how); else marks.delete(el);
+      return shouldMask(factsFor(el), opts.maskByDefault ?? true);
+    },
     on: (ev, fn) => emitter.on(ev, fn),
-    destroy() {
+    destroy(o) {
       detach();
-      forget();
+      if (o?.keep) save(); else forget();
       if (storeKey) win.removeEventListener('pagehide', onHide);
       emitter.clear();
       state = 'stopped';

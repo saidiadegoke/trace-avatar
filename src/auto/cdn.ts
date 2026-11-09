@@ -10,15 +10,18 @@
  */
 
 import { mount as mountWith } from './mount';
-import type { GuidesController, Loaders, MountOptions, PlayerModule } from './mount';
+import type { GuidesController, Loaders, MountOptions, PlayerModule, StudioModule } from './mount';
 import type { LauncherPosition } from '../shell/launcher.dom';
+import { baseOf, hasPerformer, loadGlobal } from '../shell/load-global';
+
+export { loadGlobal };
 
 export { parseManifest, validateManifest, guidesOn, modesOf } from '../core/manifest';
 export { GuideError } from './mount';
 
 const script = typeof document !== 'undefined' ? (document.currentScript as HTMLScriptElement | null) : null;
 /** The folder this file was loaded from, where the player sits too. */
-export const BASE = script?.src ? script.src.replace(/[^/]*([?#].*)?$/, '') : '';
+export const BASE = baseOf(script);
 
 /** Read the launcher setting from data-launcher. Exported for tests. */
 export function launcherOf(v: string | null | undefined): LauncherPosition | false {
@@ -27,23 +30,9 @@ export function launcherOf(v: string | null | undefined): LauncherPosition | fal
   return s === 'bottom-left' ? 'bottom-left' : 'bottom-right';
 }
 
-/** Load a script once and resolve to the global it defines. Exported for tests. */
-export function loadGlobal<T>(src: string, name: string, has: (g: unknown) => boolean, doc: Document = document): Promise<T> {
-  const w = doc.defaultView as unknown as Record<string, unknown>;
-  if (has(w[name])) return Promise.resolve(w[name] as T);
-  return new Promise<T>((resolve, reject) => {
-    const s = doc.createElement('script');
-    s.src = src;
-    s.async = true;
-    s.onload = () => (has(w[name]) ? resolve(w[name] as T) : reject(new Error(`${src} did not define ${name}`)));
-    s.onerror = () => reject(new Error(`could not load ${src}`));
-    (doc.head ?? doc.documentElement).appendChild(s);
-  });
-}
-
 export const cdnLoaders = (base: string = BASE, doc?: Document): Loaders => ({
-  // trace.min.js also defines TraceAvatar, without the hands: only the perform build will do.
-  player: () => loadGlobal<PlayerModule>(`${base}trace-perform.min.js`, 'TraceAvatar', (g) => !!g && typeof (g as { createPerformer?: unknown }).createPerformer === 'function', doc),
+  player: () => loadGlobal<PlayerModule>(`${base}trace-perform.min.js`, 'TraceAvatar', hasPerformer, doc),
+  studio: () => loadGlobal<StudioModule>(`${base}trace-studio.min.js`, 'TraceAvatarStudio', (g) => typeof (g as Partial<StudioModule> | undefined)?.createStudio === 'function', doc),
 });
 
 export function mount(opts: MountOptions, loaders: Partial<Loaders> = {}): GuidesController {

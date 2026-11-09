@@ -212,6 +212,37 @@ Custom element: `<trace-guides src="/guides/index.json" perform launcher="bottom
 `trace-avatar/element` (events `guides-ready`, `guides-play`, `guides-end`, `guides-stop`, `guides-error`).
 Try it: `examples/guides-html/`.
 
+**Record guides in the app (the studio).** Let the people you choose record guides where they work, with no JSON:
+
+```js
+mount({
+  guides: '/guides/index.json',
+  record: {
+    allowed: () => user.role === 'owner',              // checked before the studio loads
+    save: (trace, entry) => api.saveGuide(trace, entry), // default: a .trace.json download
+    requires: ['signed-in'],
+  },
+});
+```
+
+"● Record a guide" appears in the launcher, `Alt+Shift+R` starts recording (`shortcut` changes it, `false` turns it
+off) and so does `?trace-record=1`, all only when `allowed()` says yes. The studio (about 14 KB) is loaded then, never
+before.
+
+- **While recording**, a bar shows the time and the steps: **Pause**, **+ Caption** (on the last step), **Wait for…**
+  (click an element: wait until it shows some text, or until it's gone, so Do it for me waits for your app), **Mask /
+  Reveal** (click a field; passwords, card numbers and codes can never be revealed), **Stop**, and **⇅** to move
+  the bar between the bottom and the top of the page. The recording carries
+  on across full page loads and sign-ins.
+- **After Stop**, a review panel lists the steps in words ("Click "Save"", "Wait for "Saved""): edit captions, move
+  or delete steps, mark checkpoints and pauses, set the title, id, modes and pages. **▶ Show me** and **▶ Do it for
+  me** test it right there (Do it for me can cross page loads). **Save** hands `save` the trace and its manifest
+  entry; **Download** and **Copy JSON** are always there, and the raw JSON is under "Advanced".
+- Saving is your app's job (your API, a CMS, a pull request); trace-avatar hosts nothing.
+
+Without the loader: `import { createStudio } from 'trace-avatar/studio'` (CDN: `trace-studio.min.js`, global
+`TraceAvatarStudio`), then `createStudio({ save }).start()`. The playground's Record button uses it.
+
 ## The trace format
 
 A trace is plain JSON (`version: 1`). The schema ships at `trace-avatar/schema.json`.
@@ -375,7 +406,10 @@ const trace = rec.stop();   // a valid trace.json, or null if nothing happened
   it on every page: a recording that was going on the last page carries on, in the same tab, for up to 30 minutes
   (`persistMs`). The page load itself counts as a pause. Coming back from another site (a sign-in) adds a pause step,
   "Sign in, then press play.", and `signed-in` to `meta.requires`. `rec.restored` tells you it carried on.
-- The playground has a Record button: record, add captions in the JSON, play, download.
+- For authors in your app, use the studio (above): it adds captions, waits and mask choices while recording, and a
+  review panel after.
+- The recorder's own API for tools: `caption(say)`, `waitFor(el, { text } | { gone: true })`, `mark(el, 'mask' |
+  'reveal' | null)`, `elapsed`, `destroy({ keep: true })` (stop listening, keep the recording for the next page).
 
 ## Theming
 
@@ -399,8 +433,8 @@ Dark-mode colours apply automatically unless you set your own.
 ## Size
 
 About 14 KB min+brotli for the player (locators, overlay, controls, validation, pages, waits); perform mode is a
-separate 15 KB entry (player + hands), the recorder a separate 9 KB one, and the guides loader about 5 KB until its
-first play. `size-limit` guards each in CI.
+separate 15 KB entry (player + hands), the recorder a separate 9 KB one, the studio about 14 KB (loaded only for authors), and the guides loader about
+6 KB until its first play. `size-limit` guards each in CI.
 
 ## Contributing
 

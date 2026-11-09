@@ -74,4 +74,26 @@ describe('<TraceGuides>', () => {
     expect(guidesKey({ guides: M })).not.toBe(guidesKey({ guides: M, launcher: false }));
     expect(guidesKey({ guides: M })).not.toBe(guidesKey({ guides: '/g.json' }));
   });
+
+  it('record: allowed and save come from the latest render; adding or changing its settings remounts', async () => {
+    const save1 = vi.fn(); const save2 = vi.fn();
+    act(() => root.render(<TraceGuides guides={M} record={{ allowed: () => false, save: save1, requires: ['a'] }} />));
+    act(() => root.render(<TraceGuides guides={M} record={{ allowed: () => true, save: save2, requires: ['a'] }} />));
+    expect(calls).toHaveLength(1);
+    const r = calls[0].opts.record!;
+    expect(r.allowed()).toBe(true);
+    await r.save!({ version: 1, steps: [] }, { id: 'x', title: 'X', trace: 'x.trace.json' });
+    expect(save2).toHaveBeenCalledTimes(1);
+    expect(save1).not.toHaveBeenCalled();
+    expect(r.requires).toEqual(['a']);
+    act(() => root.render(<TraceGuides guides={M} record={{ allowed: () => true, save: save2, requires: ['b'] }} />));
+    expect(calls).toHaveLength(2);
+    act(() => root.render(<TraceGuides guides={M} />));
+    expect(calls).toHaveLength(3);
+    expect(calls[2].opts.record).toBeUndefined();
+    expect(guidesKey({ guides: M })).not.toBe(guidesKey({ guides: M, record: { allowed: () => true } }));
+    expect(guidesKey({ guides: M, record: { allowed: () => true, shortcut: false } })).not.toBe(guidesKey({ guides: M, record: { allowed: () => true } }));
+    act(() => root.render(<TraceGuides guides={M} record={{ allowed: () => true }} />));
+    expect(calls[3].opts.record!.save).toBeUndefined();
+  });
 });

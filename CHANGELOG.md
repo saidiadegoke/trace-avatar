@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.6
+
+The studio: record guides inside the app.
+
+- `trace-avatar/studio` (CDN `trace-studio.min.js`, global `TraceAvatarStudio`): `createStudio({ save, requires,
+  maskByDefault, perform, navigate, prepare, onReset })`.
+  - A toolbar while recording: time and steps, Pause, + Caption, Wait for… (pick an element: until it shows a text, or
+    until it's gone), Mask / Reveal (pick a field; secrets can't be revealed), Stop, and a first-time note.
+  - A review panel after Stop: the steps in words; edit captions, move, delete, checkpoint, pause; title, id (from the
+    title), modes and pages, which make the manifest entry. Problems are shown and block saving.
+  - Test play in both modes, with the app's hooks; Do it for me can cross page loads and the review comes back.
+  - Save (`save(trace, entry)`, default a download), Download, Copy JSON, Advanced JSON.
+  - Recording, review and test play all carry on across full page loads.
+- The loader: `mount({ record: { allowed, save, requires, maskByDefault, shortcut } })`. "● Record a guide" in the
+  launcher, `Alt+Shift+R` (by physical key; `shortcut` changes it or `false` turns it off) and `?trace-record=1`, all
+  only when `allowed()` says yes; the studio is loaded only then. Work left on the last page reopens it.
+  `guides.record()`, `guides.studio`. `record` on `<TraceGuides>` and on `<trace-guides>`'s `hooks`.
+- The recorder: `caption(say)`, `waitFor(el, until)`, `mark(el, 'mask' | 'reveal' | null)`, `elapsed`, and
+  `destroy({ keep: true })`. Captions survive the merging of typing and scrolls; recorded `wait` steps carry `until`.
+- The playground's Record button opens the studio; Save puts the guide in the editor.
+- Budgets: studio 14.5 KB (npm 14.01 KB, CDN 14.4 KB; the design said 14 KB). The loaders stay within 6.5 KB
+  (CDN 6.48 KB).
+
 ## 0.1.5
 
 Recording across page loads.

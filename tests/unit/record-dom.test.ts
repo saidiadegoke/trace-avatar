@@ -534,3 +534,69 @@ describe('recorder: across page loads (persistKey)', () => {
     plain.destroy();
   });
 });
+
+describe('recorder: studio hooks (caption, waitFor, mark)', () => {
+  const click = (sel: string) => $(sel).dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 5, clientY: 5 }));
+  const typeIn = (sel: string, v: string) => { ($(sel) as HTMLInputElement).value = v; $(sel).dispatchEvent(new Event('input', { bubbles: true })); };
+
+  it('caption goes on the last step (kept through typing merges); with no step yet it is a note', () => {
+    html('<button id="a">Save</button><input id="f" data-trace-reveal>');
+    let now = 0;
+    const r = createRecorder({ allowSynthetic: true, now: () => now });
+    r.caption('ignored: not recording');
+    r.start();
+    now = 10; r.caption('  Welcome  ');
+    now = 20; click('#a');
+    now = 30; r.caption('Save the draft');
+    now = 40; typeIn('#f', 'A');
+    now = 50; r.caption('Name it');
+    now = 60; typeIn('#f', 'Ada'); // merges into the first type step
+    now = 70; r.caption('   '); // blank: nothing
+    expect(r.elapsed).toBe(70);
+    const tr = r.stop()!;
+    expect(tr.steps.map((s) => [s.type, s.say])).toEqual([['note', 'Welcome'], ['click', 'Save the draft'], ['type', 'Name it']]);
+    expect(tr.steps[2].text).toBe('Ada');
+    expect(parse(tr).ok).toBe(true);
+    expect(r.elapsed).toBe(70);
+  });
+
+  it('waitFor adds a wait step with until, on an element or the page, and keeps it out of scroll pruning', () => {
+    html('<div id="status">Saving…</div><div id="spin">…</div>');
+    let now = 0;
+    const r = createRecorder({ allowSynthetic: true, now: () => now });
+    r.waitFor($('#status'), { text: 'Saved' }); // not recording: nothing
+    r.start();
+    now = 10; r.waitFor($('#status'), { text: 'Saved' });
+    now = 20; r.waitFor($('#spin'), { gone: true });
+    now = 30; r.waitFor(null, { text: 'Done' });
+    const tr = r.stop()!;
+    expect(tr.steps).toHaveLength(3);
+    expect(tr.steps[0]).toMatchObject({ type: 'wait', until: { text: 'Saved' }, target: { sel: '#status' } });
+    expect(tr.steps[1]).toMatchObject({ type: 'wait', until: { gone: true }, target: { sel: '#spin' } });
+    expect(tr.steps[2]).toEqual({ type: 'wait', t: 30, until: { text: 'Done' } });
+    expect(parse(tr).ok).toBe(true);
+  });
+
+  it('mark masks or reveals a field for this recording; a password can never be revealed', () => {
+    html('<input id="name"><input id="code" data-trace-reveal><input id="pw" type="password">');
+    let now = 0;
+    const r = createRecorder({ allowSynthetic: true, now: () => now });
+    expect(r.mark($('#name'), 'reveal')).toBe(false);
+    expect(r.mark($('#code'), 'mask')).toBe(true);
+    expect(r.mark($('#pw'), 'reveal')).toBe(true);
+    r.start();
+    now = 10; typeIn('#name', 'Ada');
+    now = 3000; typeIn('#code', 'X1');
+    now = 6000; typeIn('#pw', 'hunter2');
+    let tr = r.stop()!;
+    expect(tr.steps.map((s) => [s.text, !!s.mask])).toEqual([['Ada', false], ['••', true], ['•••••••', true]]);
+    // Back to the defaults.
+    const r2 = createRecorder({ allowSynthetic: true, now: () => now });
+    r2.mark($('#name'), 'reveal');
+    expect(r2.mark($('#name'), null)).toBe(true);
+    r2.start();
+    typeIn('#name', 'Bo');
+    tr = r2.stop()!;
+    expect(tr.steps[0]).toMatchObject({ text: '••', mask: true });
+  });
+});

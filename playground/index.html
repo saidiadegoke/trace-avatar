@@ -70,7 +70,8 @@
   </script>
   <!-- trace-perform.min.js plays both modes (trace.min.js is the smaller, show-only build). -->
   <script src="../dist/trace-perform.min.js"></script>
-  <script src="../dist/trace-record.min.js"></script>
+  <!-- The studio: record in the page, review the steps, test both modes, save. -->
+  <script src="../dist/trace-studio.min.js"></script>
   <script>
     const box = document.getElementById('json');
     const status = document.getElementById('status');
@@ -107,24 +108,22 @@
       current.on('stalled', (e) => say(`Step ${e.index + 1}: element not found (${e.reason}).`, true));
       current.on('end', () => say('Finished.'));
     });
-    // Recording: use the app on the left, then Stop. Text typed into Customer is kept (data-trace-reveal);
-    // other fields are masked. The editor panel is ignored (data-trace-ignore).
-    let rec = null;
-    const recBtn = document.getElementById('record');
-    recBtn.addEventListener('click', () => {
-      if (!rec || rec.state !== 'recording') {
-        current?.destroy();
-        rec = TraceAvatarRecord.createRecorder({ title: 'Recorded in the playground', avatar: { name: 'You' } });
-        rec.start();
-        recBtn.textContent = '■ Stop';
-        say('Recording… use the app, then press Stop.');
-        return;
-      }
-      const trace = rec.stop();
-      recBtn.textContent = '● Record';
-      if (!trace) { say('Nothing was recorded.', true); return; }
-      box.value = JSON.stringify(trace, null, 2);
-      say(`Recorded ${trace.steps.length} steps. Edit captions ("say") if you like, then Play.`);
+    // Recording happens in the studio: use the app on the left, add captions and waits from its toolbar,
+    // then Stop to review the steps and test them. Save puts the guide in the editor here. Text typed into
+    // Customer is kept (data-trace-reveal); other fields are masked. The editor panel is ignored.
+    const studio = TraceAvatarStudio.createStudio({
+      avatar: { name: 'You' },
+      onReset: window.clearForm,
+      save: (trace) => {
+        box.value = JSON.stringify(trace, null, 2);
+        say(`Saved ${trace.steps.length} steps to the editor. Close the studio (✕), then Play.`);
+      },
+    });
+    window.pg.studio = () => studio;
+    document.getElementById('record').addEventListener('click', () => {
+      current?.destroy();
+      studio.start();
+      say('Recording… use the app, then press Stop in the studio bar.');
     });
     document.getElementById('download').addEventListener('click', () => {
       const raw = read();
