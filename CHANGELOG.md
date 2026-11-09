@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.11 (9 Nov 2026)
 
 - **Do it for me brings rich-text editors to what was typed.** 0.1.10's fixes still lost, doubled or reordered
   letters now and then in Lexical ("send me atabl.", "FiFi", text cut off at the end): an editor takes an insert in,
