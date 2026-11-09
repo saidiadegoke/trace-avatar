@@ -74,7 +74,7 @@ Everything else is shared: the trace format, the recorder, captions, controls, p
 - **Moves like a person.** Gentle curves at a human pace (seeded, so the same trace always moves the same way),
   or the real recorded pointer path re-anchored to today's page.
 - **Lives on your live page.** The overlay is isolated in a shadow root and follows elements as the page or a panel
-  scrolls. Viewers can pause, take over, then resume the guide.
+  scrolls. It brings each element into view, but never pulls back a viewer who has scrolled away to read on. Viewers can pause, take over, then resume the guide.
 - **Does real work, safely.** Do it for me sets values the way frameworks notice, never learns a password (the viewer
   types masked fields), waits for the app (`until: { text: 'Saved' }`) instead of racing it, and survives full page
   loads.
@@ -143,7 +143,7 @@ import { createPerformer } from 'trace-avatar/perform';
 document.querySelector('trace-avatar').hooks = { performer: createPerformer, navigate: (p) => router.push(p) };
 ```
 
-Attributes: `src`, `controls`, `autoplay`, `rate`, `loop`, `captions`, `takeover`, `keyboard`, `avatar-name`, `avatar-image`, `avatar-color`,
+Attributes: `src`, `controls`, `autoplay`, `rate`, `loop`, `captions`, `takeover`, `scroll`, `keyboard`, `avatar-name`, `avatar-image`, `avatar-color`,
 `mode`, `resume-key`. Events: `trace-step`, `trace-stalled`, `trace-page`, `trace-handoff`, `trace-blocked`,
 `trace-state`, `trace-end`, `trace-error`.
 
@@ -370,6 +370,7 @@ property (`{ performer, prepare, onReset, navigate, currentPath }`) and listen f
 | `captions` | `'bubble'` | `'bubble'`, `'bar'` or `'none'` |
 | `takeover` | `'pause'` | what real viewer input does while playing: `'pause'` or `'ignore'` |
 | `keyboard` | `false` | Space/K play-pause, ←/→ steps (outside form fields) |
+| `scroll` | `'auto'` | may a step scroll the page to its element? `'auto'`: yes, until the viewer scrolls the page (wheel or touch); then not until they next play, pause or step. `'always'`, or `'never'` for a guide embedded in a page people read on. Authored `scroll` steps always scroll |
 | `reducedMotion` | `'auto'` | follows `prefers-reduced-motion` |
 | `seed` | trace's | changes the shape of authored paths |
 | `navigate` | — | `(path) => void`: go to a page the trace needs (e.g. `router.push`); without it the guide waits |

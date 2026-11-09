@@ -19,7 +19,7 @@ const BOOL = ['controls', 'autoplay', 'loop', 'keyboard'] as const;
 export type Hooks = Pick<TraceOptions, 'prepare' | 'onReset' | 'navigate' | 'currentPath' | 'performer'>;
 
 export class TraceAvatarElement extends HTMLElement {
-  static observedAttributes = ['src', 'captions', 'rate', 'takeover', 'mode', 'resume-key', 'avatar-name', 'avatar-image', 'avatar-color', ...BOOL];
+  static observedAttributes = ['src', 'captions', 'rate', 'takeover', 'scroll', 'mode', 'resume-key', 'avatar-name', 'avatar-image', 'avatar-color', ...BOOL];
 
   private ctl: TraceController | null = null;
   private obj: Trace | null = null;
@@ -74,6 +74,7 @@ export class TraceAvatarElement extends HTMLElement {
       keyboard: this.hasAttribute('keyboard'),
       captions: (this.getAttribute('captions') as CaptionMode) || undefined,
       takeover: (this.getAttribute('takeover') as 'pause' | 'ignore') || undefined,
+      scroll: (this.getAttribute('scroll') as 'auto' | 'always' | 'never') || undefined,
       ...(this.getAttribute('mode') === 'perform' ? { mode: 'perform' as const } : {}),
       ...(this.getAttribute('resume-key') ? { resumeKey: this.getAttribute('resume-key')! } : {}),
       ...this.fns,

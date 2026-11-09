@@ -8,11 +8,17 @@
   unless the player's own resolver finds exactly it. The guide carries on from that step with the fixed trace; Save
   the guide calls `record.save(trace, entry)` (or downloads `<id>.trace.json`), Just this time keeps it for the
   session. `trace-avatar/fix` (`offerFix`), CDN `trace-fix.min.js` (global `TraceAvatarFix`), loaded only then.
+- **`scroll` option:** whether a step may scroll the page to bring its element into view. `'auto'` (the default)
+  does, until the viewer scrolls the page with the wheel or a touch drag; from then on the guide leaves the page
+  where they put it, until they next play, pause, step or seek (scroll keys and touches already pause it). Before,
+  every off-screen element was brought into view, pulling back a viewer who had scrolled away to read on.
+  `'always'` keeps that; `'never'` never moves the page (a demo embedded in a page people read). Authored `scroll`
+  steps scroll in every mode. `<trace-avatar scroll="never">`, and the React prop.
 - `createTrace({ startAt })` starts from that step.
 - `chooseRepair`, `repairSuggestion` and the scoring now live in the core (still exported from `trace-avatar/assist`).
 - Repair offers masked fields (by their label, never their value): a step may mean the password box. Ignored and
   blurred areas are still never offered.
-- Budgets: CDN loader 6.5 → 7 KB (the fix loader and the stalled hook); Fix this step 7 KB (6.63 KB).
+- Budgets: CDN build 14 → 14.25 KB (the scroll option; 14.07 KB). CDN loader 6.5 → 7 KB (the fix loader and the stalled hook); Fix this step 7 KB (6.63 KB).
 - Playground: the button says what it saves (Save as GIF / Save as video), and a recording starts on a fresh form in
   Show me too (it used to start on whatever an earlier run had left).
 

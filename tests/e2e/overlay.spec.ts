@@ -73,6 +73,28 @@ test('scrolls an off-screen element into view and lands on it', async ({ page })
   expect(c.y).toBeLessThanOrEqual(vh);
 });
 
+test("scroll: 'auto' leaves the page where the viewer scrolled it; 'never' never moves it", async ({ page }) => {
+  // Two steps: the second is off-screen, and the viewer scrolls with the wheel between them.
+  const trace = { version: 1, steps: [{ type: 'hover', target: { sel: '#save' }, hold: 800, t: 200 }, { type: 'click', target: { sel: '#footer-btn' } }] };
+  await start(page, trace);
+  await play(page);
+  await expect.poll(async () => (await log(page)).length).toBe(1);
+  await page.mouse.move(200, 200);
+  await page.mouse.wheel(0, 150);
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
+  const y = await page.evaluate(() => scrollY);
+  await ended(page);
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => scrollY)).toBe(y);
+
+  await page.evaluate(() => scrollTo(0, 0));
+  await start(page, { version: 1, steps: [{ type: 'click', target: { sel: '#footer-btn' } }] }, { scroll: 'never' });
+  await play(page);
+  await ended(page);
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => scrollY)).toBe(0);
+});
+
 test('the ring follows an element inside a scrolled panel', async ({ page }) => {
   await page.evaluate(() => { document.getElementById('panel')!.scrollTop = 500; });
   await start(page, { version: 1, steps: [{ type: 'hover', target: { sel: '#row-10' }, hold: 5000, t: 200 }] }, { takeover: 'ignore' });

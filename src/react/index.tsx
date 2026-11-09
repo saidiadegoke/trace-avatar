@@ -30,7 +30,7 @@ export type UseTraceOptions = TraceOptions & TraceHandlers & { enabled?: boolean
 /** A stable key for the options that require rebuilding the trace. */
 export function optionsKey(o: UseTraceOptions): string {
   return JSON.stringify([
-    o.trace, o.avatar, o.controls, o.autoplay, o.loop, o.captions, o.takeover, o.keyboard, o.seed, o.reducedMotion, o.enabled ?? true,
+    o.trace, o.avatar, o.controls, o.autoplay, o.loop, o.captions, o.takeover, o.scroll, o.keyboard, o.seed, o.reducedMotion, o.enabled ?? true,
     o.mode ?? 'overlay', o.resumeKey ?? null,
   ]);
 }

@@ -163,6 +163,74 @@ describe('createTrace', () => {
     expect(box.scrollTo).toHaveBeenCalledWith({ left: undefined, top: 50, behavior: 'auto' });
   });
 
+  describe('scroll: whether steps may move the page', () => {
+    const offscreen = () => {
+      setRect(document.getElementById('b')!, 500, 5000);
+      const into = vi.fn();
+      (document.getElementById('b') as HTMLElement).scrollIntoView = into;
+      return into;
+    };
+    const wheel = (target: EventTarget = document.body) => target.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 300 }));
+
+    it("'never' leaves the page where it is; authored scroll steps still scroll", () => {
+      const into = offscreen();
+      const t = make({ scroll: 'never' });
+      t.play();
+      clock.run(5000);
+      expect(t.state).toBe('ended');
+      expect(into).not.toHaveBeenCalled();
+      const winScroll = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
+      make({ scroll: 'never', trace: { version: 1, steps: [{ type: 'scroll', by: { y: 300 } }] } }).play();
+      clock.run(3000);
+      expect(winScroll).toHaveBeenCalled();
+    });
+
+    it("'auto' (the default) stops bringing elements into view once the viewer scrolls, until they steer the guide again", () => {
+      const into = offscreen();
+      const t = make();
+      t.play();
+      clock.run(200);
+      wheel();
+      clock.run(5000);
+      expect(t.state).toBe('ended');
+      expect(into).not.toHaveBeenCalled();        // the viewer scrolled away: not pulled back
+      t.play();                                    // they steer it again
+      clock.run(5000);
+      expect(into).toHaveBeenCalledTimes(1);
+      t.destroy();
+      // Without scrolling, 'auto' reveals just as before.
+      const into2 = offscreen();
+      make().play();
+      clock.run(5000);
+      expect(into2).toHaveBeenCalledWith({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+    });
+
+    it("'always' reveals even after the viewer scrolled; a wheel over the guide's own controls doesn't count", () => {
+      const into = offscreen();
+      const t = make({ scroll: 'always' });
+      t.play();
+      clock.run(200);
+      wheel();
+      clock.run(5000);
+      expect(into).toHaveBeenCalledTimes(1);
+      t.destroy();
+      const into2 = offscreen();
+      const t2 = make({ controls: true });
+      t2.play();
+      clock.run(200);
+      const hosts = document.querySelectorAll('[data-trace-avatar]'); const host = hosts[hosts.length - 1]!;
+      wheel(host);
+      clock.run(5000);
+      expect(into2).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops listening when destroyed', () => {
+      const remove = vi.spyOn(document, 'removeEventListener');
+      make().destroy();
+      expect(remove.mock.calls.map((c) => c[0])).toEqual(expect.arrayContaining(['wheel', 'touchmove']));
+    });
+  });
+
   it('ripples on clicks, except under reduced motion', () => {
     const t = make();
     t.play();

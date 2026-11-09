@@ -162,7 +162,7 @@
     {
       "name": "CDN build",
       "path": "dist/trace.min.js",
-      "limit": "14 KB"
+      "limit": "14.25 KB"
     },
     {
       "name": "perform (core + performer)",

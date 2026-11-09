@@ -73,6 +73,14 @@ export interface TraceOptions {
   captions?: CaptionMode;
   /** What real viewer input does while playing. Default 'pause'. */
   takeover?: 'pause' | 'ignore';
+  /**
+   * Whether a step may scroll the page to bring its element into view.
+   * 'auto' (default): yes, until the viewer scrolls the page themselves; from then on the guide leaves the
+   * page where they put it, until they next play, pause, step or seek it. 'always': every off-screen element
+   * is brought into view. 'never': steps never move the page (for a guide embedded in a page people read on,
+   * such as a demo on a landing page). Authored `scroll` steps scroll in every mode.
+   */
+  scroll?: 'auto' | 'always' | 'never';
   /** Space/K play-pause, ←/→ steps, while focus is not in a field. Default false. */
   keyboard?: boolean;
   /** Overrides the trace's seed. */
@@ -190,6 +198,10 @@ export function createTrace(opts: TraceOptions): TraceController {
   let destroyed = false;
   let warned = false;
   const pending: Msg[] = [];
+  const scrollMode = opts.scroll ?? 'auto';
+  /** The viewer scrolled the page since they last told the guide to do something ('auto' then leaves the page alone). */
+  let viewerScrolled = false;
+  let unscroll: (() => void) | null = null;
 
   const onCommand = (c: Command) => {
     if (c === 'toggle') dispatch({ kind: 'toggle' });
@@ -224,6 +236,7 @@ export function createTrace(opts: TraceOptions): TraceController {
       }
       if ((opts.takeover ?? 'pause') === 'pause') dispatch({ kind: 'takeover' });
     }) ?? null;
+    if (scrollMode === 'auto' && doc) unscroll = watchViewerScroll(doc, host, () => { viewerScrolled = true; });
     resume(trace);
     if (opts.startAt !== undefined && opts.startAt > 0 && opts.startAt < trace.steps.length) {
       ran = true;
@@ -272,6 +285,7 @@ export function createTrace(opts: TraceOptions): TraceController {
           if (!cfg.reducedMotion) renderer?.ripple(f.x, f.y);
           break;
         case 'reveal': {
+          if (scrollMode === 'never' || (scrollMode === 'auto' && viewerScrolled)) break;
           const el = page.element(f.i) as (Element & { scrollIntoView?: Element['scrollIntoView'] }) | null;
           el?.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: cfg.reducedMotion ? 'auto' : 'smooth' });
           break;
@@ -436,6 +450,8 @@ export function createTrace(opts: TraceOptions): TraceController {
       return;
     }
     if (!tr) { pending.push(m); return; }
+    // The viewer is steering the guide again, so it may bring the next element into view again.
+    if (/^(play|toggle|pause|next|prev|seek)$/.test(m.kind)) viewerScrolled = false;
     // Starting from the beginning goes through onReset / prepare when the host gave them.
     const fromStart = s.phase === 'idle' || s.phase === 'ended';
     if (fromStart && (m.kind === 'play' || m.kind === 'toggle')) { start(m); return; }
@@ -477,9 +493,22 @@ export function createTrace(opts: TraceOptions): TraceController {
       if (raf) clock.caf(raf);
       raf = 0;
       unwatch?.();
+      unscroll?.();
       renderer?.destroy();
       page.clear();
       emitter.clear();
     },
   };
+}
+
+/**
+ * Tells when the viewer scrolls the page with the wheel or a touch drag (not the 'scroll' event, which
+ * the guide's own scrolling fires too). Scrolling keys and touches already pause the guide (takeover);
+ * the wheel doesn't. A wheel over the guide's own controls doesn't count.
+ */
+function watchViewerScroll(doc: Document, host: Element | null, cb: () => void): () => void {
+  const h = (e: Event) => { if (!host || !e.composedPath().includes(host)) cb(); };
+  doc.addEventListener('wheel', h, true);
+  doc.addEventListener('touchmove', h, true);
+  return () => { doc.removeEventListener('wheel', h, true); doc.removeEventListener('touchmove', h, true); };
 }

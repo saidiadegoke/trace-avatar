@@ -75,8 +75,11 @@ describe('asking the AI', () => {
     fc.assert(fc.property(fc.string({ minLength: 3, maxLength: 12 }).filter((s) => s.trim().length >= 3), fc.array(fc.string({ maxLength: 30 }), { maxLength: 8 }), (typed, names) => {
       const t: Trace = { version: 1, steps: [{ type: 'type', target: { role: 'textbox', name: 'A' }, text: typed }, { type: 'click', target: { role: 'button', name: 'Go' } }] };
       const cands = names.map((n, i) => ({ id: i, role: 'button', name: `${n}${i % 2 ? typed : ''}` }));
-      const p = repairPayload(t, 1, cands);
-      return !JSON.stringify((p.input as { candidates: unknown }).candidates).toLowerCase().includes(typed.trim().toLowerCase());
+      const sent = (c: typeof cands) => JSON.stringify((repairPayload(t, 1, c).input as { candidates: unknown }).candidates).toLowerCase();
+      const needle = typed.trim().toLowerCase();
+      // A typed value that is part of the payload's own words ("name", "button") proves nothing.
+      fc.pre(!sent(names.map((n, i) => ({ id: i, role: 'button', name: n }))).includes(needle));
+      return !sent(cands).includes(needle);
     }));
   });
 
