@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ACTIVE_KEY, END_HOLD_MS, GuideError, defaultLoaders, mount } from '../../src/auto/index';
+import { ACTIVE_KEY, END_HOLD_MS, GuideError, PENDING_KEY, defaultLoaders, mount } from '../../src/auto/index';
 import type { GuidesController, Manifest, MountOptions, PlayerModule } from '../../src/auto/index';
 import { createEmitter } from '../../src/shell/emitter';
 import type { TraceController, TraceEvents, TraceOptions } from '../../src/index';
@@ -225,7 +225,7 @@ describe('mount: playing', () => {
     await g.ready;
     g.launcher!.open();
     const root = g.launcher!.host.shadowRoot!;
-    expect(Array.from(root.querySelectorAll('.menu button')).map((b) => b.textContent)).toEqual(['Show me', 'Do it for me', 'Show me']);
+    expect(Array.from(root.querySelectorAll('.menu button')).map((b) => b.textContent)).toEqual(['Show me', 'Do it for me', 'Copy link', 'Show me', 'Copy link']);
     (root.querySelectorAll('.menu button')[1] as HTMLElement).click();
     await tick();
     expect(p.made[0].opts).toMatchObject({ mode: 'perform' });
@@ -338,5 +338,199 @@ describe('defaultLoaders', () => {
     const mod = await defaultLoaders.player();
     expect(typeof mod.createTrace).toBe('function');
     expect(typeof (mod as unknown as { createPerformer: unknown }).createPerformer).toBe('function');
+  });
+});
+
+describe('mount: links', () => {
+  const dialog = (g: GuidesController) => g.launcher!.host.shadowRoot!.querySelector('.dlg') as HTMLElement;
+  const answer = (g: GuidesController, text: string) => (Array.from(dialog(g).querySelectorAll('button')).find((b) => b.textContent === text) as HTMLElement).click();
+  const settle = async () => { await tick(12); };
+  const visit = (url: string) => history.replaceState({ keep: 1 }, '', url);
+
+  it('?trace=id plays Show me once, and the parameter leaves the address', async () => {
+    visit('/app?x=1&trace=invoice#top');
+    const { g, p } = go();
+    expect(location.pathname + location.search + location.hash).toBe('/app?x=1#top');
+    expect(history.state).toEqual({ keep: 1 });
+    await settle();
+    expect(p.made).toHaveLength(1);
+    expect(p.made[0].opts.mode).toBe('overlay');
+    expect(g.playing?.id).toBe('invoice');
+    expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
+  });
+
+  it('#trace=id works too', async () => {
+    visit('/app#trace=inline');
+    const { p } = go();
+    expect(location.hash).toBe('');
+    await settle();
+    expect(p.made).toHaveLength(1);
+  });
+
+  it('a link that is not a guide id, or names no guide, is reported and plays nothing', async () => {
+    visit('/app?trace=https%3A%2F%2Fevil.example%2Fx.json');
+    const errs: string[] = [];
+    const a = go();
+    a.g.on('error', (e) => errs.push(e.message));
+    await settle();
+    expect(a.p.made).toHaveLength(0);
+    expect(location.search).toBe('');
+    visit('/app?trace=missing');
+    const b = go();
+    b.g.on('error', (e) => errs.push(e.message));
+    await settle();
+    expect(b.p.made).toHaveLength(0);
+    expect(errs).toEqual(['"https://evil.example/x.json" is not a guide id: a link can only name a guide from the manifest', 'no guide "missing" in the manifest']);
+    expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
+  });
+
+  it('Do it for me from a link always asks: Start, Show me instead, Cancel', async () => {
+    visit('/app?trace=invoice&trace-mode=perform');
+    const a = go({ perform: true });
+    await settle();
+    expect(a.p.made).toHaveLength(0);
+    expect(dialog(a.g).hidden).toBe(false);
+    answer(a.g, 'Start');
+    await settle();
+    expect(a.p.made[0].opts.mode).toBe('perform');
+    a.g.destroy();
+    sessionStorage.clear();
+
+    visit('/app?trace=invoice&trace-mode=perform');
+    const b = go({ perform: true });
+    await settle();
+    answer(b.g, 'Show me instead');
+    await settle();
+    expect(b.p.made[0].opts.mode).toBe('overlay');
+    b.g.destroy();
+    sessionStorage.clear();
+
+    visit('/app?trace=invoice&trace-mode=perform');
+    const c = go({ perform: true });
+    await settle();
+    answer(c.g, 'Cancel');
+    await settle();
+    expect(c.p.made).toHaveLength(0);
+    expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
+  });
+
+  it('a Do it for me link plays Show me (without asking) when the app or links: "overlay" don’t allow it', async () => {
+    visit('/app?trace=invoice&trace-mode=perform');
+    const a = go();
+    await settle();
+    expect(a.p.made[0].opts.mode).toBe('overlay');
+    a.g.destroy();
+    sessionStorage.clear();
+    visit('/app?trace=invoice&trace-mode=perform');
+    const b = go({ perform: true, links: 'overlay' });
+    await settle();
+    expect(dialog(b.g).hidden).toBe(true);
+    expect(b.p.made[0].opts.mode).toBe('overlay');
+  });
+
+  it('links: false leaves the address alone and plays nothing; there is no Copy link', async () => {
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify({ id: 'invoice', mode: 'overlay', at: Date.now() }));
+    visit('/app?trace=invoice');
+    const { g, p } = go({ links: false });
+    await settle();
+    expect(location.search).toBe('?trace=invoice');
+    expect(p.made).toHaveLength(0);
+    expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
+    g.launcher!.open();
+    expect(Array.from(g.launcher!.host.shadowRoot!.querySelectorAll('.menu button')).map((b) => b.textContent)).not.toContain('Copy link');
+  });
+
+  it('a start that prepare blocked keeps the link (signing in first); it is used up when the guide starts', async () => {
+    visit('/login?trace=invoice');
+    const p = fakePlayer({ state: 'idle' });
+    const { g } = go({}, p);
+    await settle();
+    expect(p.made).toHaveLength(1);
+    expect(JSON.parse(sessionStorage.getItem(PENDING_KEY)!)).toMatchObject({ id: 'invoice', mode: 'overlay' });
+    p.made[0].ctl.emit('state', { phase: 'idle' });
+    expect(sessionStorage.getItem(PENDING_KEY)).not.toBeNull();
+    p.made[0].ctl.emit('state', { phase: 'playing' });
+    expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
+    g.destroy();
+  });
+
+  it('after the sign-in, the next page plays the pending guide; an agreed Do it for me is not asked again', async () => {
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify({ id: 'invoice', mode: 'perform', at: Date.now(), agreed: true }));
+    const { g, p } = go({ perform: true });
+    await settle();
+    expect(dialog(g).hidden).toBe(true);
+    expect(p.made[0].opts.mode).toBe('perform');
+  });
+
+  it('the agreement is remembered when the guide is blocked, so the next page doesn’t ask again', async () => {
+    visit('/app?trace=invoice&trace-mode=perform');
+    const p = fakePlayer({ state: 'idle' });
+    const { g } = go({ perform: true }, p);
+    await settle();
+    answer(g, 'Start');
+    await settle();
+    expect(JSON.parse(sessionStorage.getItem(PENDING_KEY)!)).toMatchObject({ mode: 'perform', agreed: true });
+  });
+
+  it('a stale or broken pending guide is dropped', async () => {
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify({ id: 'invoice', mode: 'overlay', at: Date.now() - 11 * 60_000 }));
+    const a = go();
+    await settle();
+    expect(a.p.made).toHaveLength(0);
+    expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
+    sessionStorage.setItem(PENDING_KEY, '{bad');
+    const b = go();
+    await settle();
+    expect(b.p.made).toHaveLength(0);
+  });
+
+  it('a guide that carries on from the last page wins over an older link', async () => {
+    sessionStorage.setItem(ACTIVE_KEY, JSON.stringify({ id: 'inline', mode: 'overlay', at: Date.now() }));
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify({ id: 'invoice', mode: 'overlay', at: Date.now() }));
+    const p = fakePlayer({ state: 'paused' });
+    const { g } = go({}, p);
+    await settle();
+    expect(p.made.map((m) => m.opts.resumeKey)).toEqual(['auto:inline']);
+    expect(g.playing?.id).toBe('inline');
+    expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
+  });
+
+  it('a pending guide whose manifest fails to load waits quietly', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify({ id: 'invoice', mode: 'overlay', at: Date.now() }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 500 }));
+    const { g, p } = go({ guides: '/g.json' });
+    await g.ready.catch(() => {});
+    await settle();
+    expect(p.made).toHaveLength(0);
+  });
+
+  it('a link destroyed while asking does nothing; without a launcher there is no one to ask', async () => {
+    visit('/app?trace=invoice&trace-mode=perform');
+    const a = go({ perform: true });
+    await settle();
+    a.g.destroy();
+    await settle();
+    expect(a.p.made).toHaveLength(0);
+  });
+
+  it('link() builds links for this page or another; Copy link puts a Show me link on the clipboard', async () => {
+    const { g } = go();
+    await g.ready;
+    expect(g.link('invoice')).toBe(`${location.origin}/app?trace=invoice`);
+    expect(g.link('invoice', { mode: 'perform', path: '/app/invoices' })).toBe(`${location.origin}/app/invoices?trace=invoice&trace-mode=perform`);
+    const write = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: write } });
+    g.launcher!.open();
+    const root = g.launcher!.host.shadowRoot!;
+    const copyBtn = Array.from(root.querySelectorAll('.menu button')).find((b) => b.textContent === 'Copy link') as HTMLElement;
+    copyBtn.click();
+    await tick();
+    expect(write).toHaveBeenCalledWith(`${location.origin}/app?trace=invoice`);
+    expect(copyBtn.textContent).toBe('Copied');
+    write.mockRejectedValueOnce(new Error('denied'));
+    copyBtn.click();
+    await tick();
+    expect(copyBtn.textContent).toBe('Copy failed');
   });
 });

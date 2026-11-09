@@ -7,6 +7,8 @@
  */
 
 import { findGuide, guidesOn, modesOf, parseManifest } from '../core/manifest';
+import { makeLink, pendingOk, readLink } from '../core/links';
+import type { Pending } from '../core/links';
 import type { GuideMode, Manifest, NGuide, NManifest } from '../core/manifest';
 import type { Avatar } from '../core/format';
 import type { PrepareResult, TraceController, TraceOptions } from '../index';
@@ -39,6 +41,13 @@ export interface MountOptions {
   captions?: CaptionMode;
   rate?: number;
   avatar?: Avatar;
+  /**
+   * Guide links (`?trace=id`, `#trace=id`): true (default), 'overlay' (links play Show me only),
+   * or false (ignored). Do it for me from a link always asks the viewer first.
+   */
+  links?: boolean | 'overlay';
+  /** The link parameter. Default 'trace' (and 'trace-mode'). */
+  linkParam?: string;
   /** Where buttons are looked for and the launcher goes. Default: document. */
   doc?: Document;
 }
@@ -67,6 +76,8 @@ export interface GuidesController {
   list(path?: string): NGuide[];
   /** The modes a guide may be played in here. */
   modes(id: string): GuideMode[];
+  /** A link that opens a page (default: this one) and plays the guide. */
+  link(id: string, o?: { mode?: GuideMode; path?: string }): string;
   on<K extends keyof GuidesEvents>(ev: K, fn: (d: GuidesEvents[K]) => void): () => void;
   readonly launcher: Launcher | null;
   destroy(): void;
@@ -75,6 +86,8 @@ export interface GuidesController {
 /** sessionStorage: the guide playing, so the next page (after a full load) carries on with it. */
 export const ACTIVE_KEY = 'trace-avatar:auto:active';
 const ACTIVE_MS = 10 * 60_000;
+/** sessionStorage: a guide asked for by a link, kept until it really starts (e.g. across a sign-in). */
+export const PENDING_KEY = 'trace-avatar:auto:pending';
 /** How long the last step stays on screen after a guide ends. */
 export const END_HOLD_MS = 2000;
 
@@ -115,6 +128,21 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     clear() { try { win?.sessionStorage.removeItem(ACTIVE_KEY); } catch { /* storage off */ } },
   };
 
+  const linksOn = opts.links ?? true;
+  const param = opts.linkParam ?? 'trace';
+  const pending = {
+    get(): Pending | null {
+      try { const v: unknown = JSON.parse(win?.sessionStorage.getItem(PENDING_KEY) ?? 'null'); return pendingOk(v, Date.now()) ? v : null; } catch { return null; }
+    },
+    set(p: Pending) { try { win?.sessionStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch { /* storage off */ } },
+    clear() { try { win?.sessionStorage.removeItem(PENDING_KEY); } catch { /* storage off */ } },
+  };
+  const link = (id: string, o: { mode?: GuideMode; path?: string } = {}) =>
+    makeLink(win?.location?.origin ?? 'http://localhost', o.path ?? where() ?? '/', id, o.mode ?? 'overlay', param);
+  const copy = async (id: string): Promise<boolean> => {
+    try { await win!.navigator.clipboard.writeText(link(id)); return true; } catch { return false; }
+  };
+
   const launcher: Launcher | null = doc.body || doc.documentElement ? createLauncher({
     doc,
     position: opts.launcher || 'bottom-right',
@@ -122,6 +150,7 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     items: () => (manifest ? guidesOn(manifest, where()) : []).map((g) => ({ id: g.id, title: g.title, modes: modesOf(g, performAllowed) })).filter((g) => g.modes.length),
     onPlay: (id, mode) => { void play(id, { mode }); },
     onStop: () => stop(),
+    ...(linksOn ? { onCopy: copy } : {}),
   }) : null;
 
   const traceOf = (g: NGuide) => (typeof g.trace === 'string' ? new URL(g.trace, base).href : g.trace);
@@ -222,13 +251,53 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
   })();
   ready.catch((e) => { if (!destroyed) report(e instanceof Error ? e : new GuideError(String(e))); });
 
-  // A guide that was playing when the last page unloaded carries on here.
-  const active = store.get();
-  if (active && Date.now() - active.at < ACTIVE_MS) {
-    // One that can't carry on here is forgotten, so it isn't tried (and reported) on every page.
-    void play(active.id, { mode: active.mode }, true).then((c) => { if (!c && !current && !destroyed) store.clear(); });
+  // A link: remember the guide it names, and take the parameter out of the address so a reload
+  // or a shared screenshot doesn't replay it.
+  if (win) {
+    const req = linksOn ? readLink(win.location.href, param) : null;
+    if (req) {
+      try { win.history.replaceState(win.history.state, '', req.cleaned); } catch { /* sandboxed */ }
+      if (req.id) pending.set({ id: req.id, mode: req.mode, at: Date.now() });
+      else void ready.then(() => fail(`"${req.raw}" is not a guide id: a link can only name a guide from the manifest`), () => {});
+    }
   }
-  else if (active) store.clear();
+
+  /** Play the guide a link asked for. Do it for me asks first; the link is used up once the guide really starts. */
+  async function fromLink() {
+    const p = pending.get();
+    if (!p) { pending.clear(); return; }
+    if (!linksOn) { pending.clear(); return; }
+    try { await ready; } catch { return; }
+    const g = manifest && findGuide(manifest, p.id);
+    if (!g) { pending.clear(); fail(`no guide "${p.id}" in the manifest`, p.id); return; }
+    let mode: GuideMode = p.mode;
+    if (mode === 'perform' && (linksOn === 'overlay' || !modesOf(g, performAllowed).includes('perform'))) mode = 'overlay';
+    if (mode === 'perform' && !p.agreed) {
+      const answer = launcher ? await launcher.confirm(g.title) : null;
+      if (destroyed) return;
+      if (!answer) { pending.clear(); return; }
+      mode = answer;
+      pending.set({ ...p, mode, agreed: answer === 'perform' });
+    }
+    const c = await play(p.id, { mode });
+    if (!c) { pending.clear(); return; }
+    // A start that prepare blocked (not signed in yet) keeps the link for the next page.
+    if (c.state !== 'idle') { pending.clear(); return; }
+    const off = c.on('state', ({ phase }) => { if (phase !== 'idle') { off(); pending.clear(); } });
+  }
+
+  // A guide that was playing when the last page unloaded carries on here; otherwise a link's guide plays.
+  const active = store.get();
+  const resumed: Promise<TraceController | null> = active && Date.now() - active.at < ACTIVE_MS
+    ? play(active.id, { mode: active.mode }, true)
+    : (active && store.clear(), Promise.resolve(null));
+  void resumed.then((c) => {
+    if (destroyed) return;
+    // One that can't carry on here is forgotten, so it isn't tried (and reported) on every page.
+    if (!c && !current) store.clear();
+    if (c) pending.clear(); // the guide that carried on wins over an older link
+    else void fromLink();
+  });
 
   return {
     ready,
@@ -238,6 +307,7 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     stop,
     list: (path) => (manifest ? guidesOn(manifest, path ?? where()) : []),
     modes: (id) => { const g = manifest && findGuide(manifest, id); return g ? modesOf(g, performAllowed) : []; },
+    link,
     on: (ev, fn) => emitter.on(ev, fn),
     launcher,
     destroy() {

@@ -95,7 +95,7 @@ export interface TraceGuidesProps extends MountOptions {
 
 /** A stable key for the options that require remounting the guides. */
 export function guidesKey(o: MountOptions): string {
-  return JSON.stringify([o.guides, o.launcher ?? 'bottom-right', !!o.perform, o.controls ?? true, o.captions, o.rate, o.avatar]);
+  return JSON.stringify([o.guides, o.launcher ?? 'bottom-right', !!o.perform, o.controls ?? true, o.captions, o.rate, o.avatar, o.links ?? true, o.linkParam ?? 'trace']);
 }
 
 /**

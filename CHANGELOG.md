@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.4
+
+Links that open the app and play a guide.
+
+- `?trace=id` (and `&trace-mode=perform`, or `#trace=…`) plays a guide from the manifest. The parameter is removed
+  on arrival. A link waits through a sign-in that `prepare` asks for, across page reloads, for up to 10 minutes.
+- Only guide ids from the app's manifest: a link carrying a trace URL is refused and reported.
+- Do it for me from a link always asks first (Start · Show me instead · Cancel); the answer is kept while the link
+  waits, so a sign-in doesn't ask twice. Without Do it for me allowed, a Do it for me link plays Show me.
+- **Copy link** in the launcher; `guides.link(id, { mode, path })`; options `links` (`true`, `'overlay'`, `false`)
+  and `linkParam`; script attribute `data-links`; `links` on `<trace-guides>`.
+- Loader budgets 5.5 KB → 6.5 KB (links: reading, consent, waiting through a sign-in, Copy link).
+
 ## 0.1.3
 
 Guides for a whole app with one script tag.

@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Guides fixture: sign in first</title></head>
+<body style="font:15px system-ui;margin:40px;display:grid;gap:12px;max-width:420px">
+  <p id="who"></p>
+  <button id="signin">Sign in</button>
+  <label>Customer <input id="customer"></label>
+  <label>Amount <input id="amount"></label>
+  <button id="send" onclick="document.getElementById('sent').textContent = 'Sent to ' + customer.value">Send invoice</button>
+  <p id="sent"></p>
+  <script src="/dist/trace-auto.min.js"></script>
+  <script>
+    // An app whose guides need a signed-in user: prepare says no until then, and signing in reloads.
+    const signedIn = () => sessionStorage.getItem('signed-in') === 'yes';
+    document.getElementById('who').textContent = signedIn() ? 'Signed in' : 'Signed out';
+    document.getElementById('signin').onclick = () => { sessionStorage.setItem('signed-in', 'yes'); location.reload(); };
+    window.guides = TraceAvatarAuto.mount({
+      guides: {
+        version: 1,
+        guides: [{ id: 'invoice', title: 'Create an invoice', trace: '/tests/e2e/fixtures/guides/invoice.trace.json', modes: ['overlay', 'perform'] }],
+      },
+      perform: true,
+      prepare: () => (signedIn() ? true : { ok: false, say: 'Sign in to start this guide.' }),
+    });
+  </script>
+</body></html>

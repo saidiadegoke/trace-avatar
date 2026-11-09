@@ -175,8 +175,21 @@ on the first play, so until then the page pays about 5 KB.
 | `data-guides` | — | the manifest URL (trace URLs in it are relative to it) |
 | `data-launcher` | `bottom-right` | `bottom-left`, or `off` to hide the corner button and use your own buttons |
 | `data-perform` | `false` | `true` allows Do it for me, for guides whose `modes` include `"perform"` (both must agree) |
+| `data-links` | on | `overlay`: links play Show me only; `off`: links are ignored |
 
 Without `pages` a guide is offered on every page. Only guides in the manifest can play, by id.
+
+**Links.** `https://your.app/app/invoices?trace=create-invoice` opens the page and plays the guide; add
+`&trace-mode=perform` for Do it for me (or use `#trace=…` if your server drops unknown parameters). The launcher has
+**Copy link** on every guide, and `guides.link(id, { mode, path })` builds one.
+
+- The parameter is removed from the address on arrival, so a reload doesn't replay it.
+- If your `prepare` hook says the viewer must sign in first, the link waits through the sign-in (even a full page
+  reload) for up to 10 minutes and plays once the guide can start.
+- **A link can only name a guide id from your manifest**, never a trace or a trace URL, so nobody can put their
+  own guide on your app by sending a link.
+- **Do it for me from a link always asks first** ("Do it for me: Create an invoice — Start · Show me instead ·
+  Cancel"). A link alone never makes your app act.
 
 From npm, with your router and hooks:
 

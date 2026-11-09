@@ -109,12 +109,12 @@ export class TraceAvatarElement extends HTMLElement {
 export type GuidesHooks = Pick<MountOptions, 'prepare' | 'onReset' | 'navigate' | 'currentPath'>;
 
 /**
- * <trace-guides src="/guides/index.json" launcher="bottom-left" perform></trace-guides>
+ * <trace-guides src="/guides/index.json" launcher="bottom-left" perform links="overlay"></trace-guides>
  *
  * The loader as an element. Events: guides-ready, guides-play, guides-end, guides-stop, guides-error.
  */
 export class TraceGuidesElement extends HTMLElement {
-  static observedAttributes = ['src', 'launcher', 'perform', 'controls', 'captions', 'rate'];
+  static observedAttributes = ['src', 'launcher', 'perform', 'controls', 'captions', 'rate', 'links'];
   private g: GuidesController | null = null;
   private fns: GuidesHooks = {};
 
@@ -132,8 +132,10 @@ export class TraceGuidesElement extends HTMLElement {
     if (!src) return null;
     const l = (this.getAttribute('launcher') ?? '').toLowerCase();
     const rate = Number(this.getAttribute('rate'));
+    const links = (this.getAttribute('links') ?? '').toLowerCase();
     return {
       guides: src,
+      links: links === 'off' || links === 'false' ? false : links === 'overlay' ? 'overlay' : true,
       launcher: l === 'off' || l === 'false' || l === 'none' ? false : l === 'bottom-left' ? 'bottom-left' : 'bottom-right',
       perform: this.hasAttribute('perform'),
       controls: this.getAttribute('controls') !== 'false',

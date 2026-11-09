@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test';
 const APP = '/tests/e2e/fixtures/guides/app.html';
 const launcher = (page: Page) => page.locator('[data-trace-avatar=launcher]');
 const fab = (page: Page) => launcher(page).locator('.fab');
-const menuButtons = (page: Page) => launcher(page).locator('.menu button');
+const menuButtons = (page: Page) => launcher(page).locator('.menu .go');
 const overlay = (page: Page) => page.locator('[data-trace-avatar]:not([data-trace-avatar=launcher])');
 const ready = (page: Page) => page.waitForFunction(() => (window as any).TraceAvatarAuto?.guides?.manifest);
 
@@ -77,4 +77,60 @@ test('a guide carries on after a full page load', async ({ page }) => {
   await expect(page).toHaveURL(/page2\.html$/, { timeout: 15_000 });
   await expect(page.locator('#done')).toHaveText('Finished', { timeout: 15_000 });
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem('trace-avatar:auto:active'))).toBeNull();
+});
+
+test.describe('links', () => {
+  test('?trace=id plays Show me and leaves the address clean', async ({ page }) => {
+    await page.goto(`${APP}?trace=invoice`);
+    await expect(overlay(page).locator('.bubble')).toHaveText('Pick the customer.', { timeout: 10_000 });
+    expect(new URL(page.url()).search).toBe('');
+    await expect(page.locator('#customer')).toHaveValue('');
+  });
+
+  test('a Do it for me link asks first; Start runs it', async ({ page }) => {
+    await page.goto(`${APP}?trace=invoice&trace-mode=perform`);
+    const dlg = launcher(page).locator('.dlg');
+    await expect(dlg).toBeVisible({ timeout: 10_000 });
+    await expect(dlg.locator('h2')).toHaveText('Do it for me: Create an invoice');
+    await expect(page.locator('#customer')).toHaveValue(''); // nothing happened before the click
+    await dlg.getByRole('button', { name: 'Start' }).click();
+    await expect(page.locator('#sent')).toHaveText('Sent to Ada Stores for 125000', { timeout: 15_000 });
+  });
+
+  test('a link to an app that needs sign-in waits through the sign-in and its reload', async ({ page }) => {
+    await page.goto('/tests/e2e/fixtures/guides/signin.html#trace=invoice&trace-mode=perform');
+    const dlg = launcher(page).locator('.dlg');
+    await dlg.getByRole('button', { name: 'Start' }).click();
+    await expect(overlay(page).locator('.bar')).toHaveText('Sign in to start this guide.', { timeout: 10_000 });
+    await page.click('#signin'); // a full reload, without the link in the address
+    await expect(page.locator('#who')).toHaveText('Signed in');
+    await expect(page.locator('#sent')).toHaveText('Sent to Ada Stores', { timeout: 15_000 });
+    await expect(dlg).toBeHidden(); // agreed once, not asked again
+    expect(await page.evaluate(() => sessionStorage.getItem('trace-avatar:auto:pending'))).toBeNull();
+  });
+
+  test('a link carrying a trace URL is refused', async ({ page }) => {
+    const warnings: string[] = [];
+    page.on('console', (m) => { if (m.type() === 'warning') warnings.push(m.text()); });
+    await page.goto(`${APP}?trace=${encodeURIComponent('https://evil.example/fake.trace.json')}`);
+    await expect.poll(() => warnings.join('\n')).toContain('is not a guide id');
+    await expect(overlay(page)).toHaveCount(0);
+  });
+
+  test('Copy link copies a link that plays the guide here', async ({ page, context }) => {
+    await page.addInitScript(() => {
+      (window as any).copied = [];
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string) => { (window as any).copied.push(t); } } });
+    });
+    await page.goto(APP);
+    await ready(page);
+    await fab(page).click();
+    await launcher(page).getByRole('menuitem', { name: 'Copy link: Create an invoice' }).click();
+    await expect(launcher(page).getByRole('menuitem', { name: 'Copy link: Create an invoice' })).toHaveText('Copied');
+    const [url] = await page.evaluate(() => (window as any).copied);
+    expect(url).toMatch(/\/tests\/e2e\/fixtures\/guides\/app\.html\?trace=invoice$/);
+    const other = await context.newPage();
+    await other.goto(url);
+    await expect(other.locator('[data-trace-avatar]:not([data-trace-avatar=launcher])').locator('.bubble')).toHaveText('Pick the customer.', { timeout: 10_000 });
+  });
 });

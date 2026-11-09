@@ -28,7 +28,11 @@ describe('<trace-guides>', () => {
     const el = make();
     expect(el.options()).toBeNull();
     el.setAttribute('src', '/g.json');
-    expect(el.options()).toEqual({ guides: '/g.json', launcher: 'bottom-right', perform: false, controls: true, captions: undefined, rate: undefined });
+    expect(el.options()).toEqual({ guides: '/g.json', links: true, launcher: 'bottom-right', perform: false, controls: true, captions: undefined, rate: undefined });
+    el.setAttribute('links', 'overlay');
+    expect(el.options()!.links).toBe('overlay');
+    el.setAttribute('links', 'off');
+    expect(el.options()!.links).toBe(false);
     el.setAttribute('launcher', 'off');
     el.setAttribute('perform', '');
     el.setAttribute('controls', 'false');

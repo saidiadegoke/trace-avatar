@@ -5,7 +5,8 @@
  *
  * Attributes on the script tag: data-guides (the manifest; without it nothing mounts, and you call
  * TraceAvatarAuto.mount yourself), data-launcher ("bottom-right" by default, "bottom-left", or "off"),
- * data-perform ("true" allows Do it for me). The player is loaded from the same folder on first play.
+ * data-perform ("true" allows Do it for me), data-links ("overlay": links play Show me only; "off").
+ * The player is loaded from the same folder on first play.
  */
 
 import { mount as mountWith } from './mount';
@@ -53,7 +54,13 @@ export function mount(opts: MountOptions, loaders: Partial<Loaders> = {}): Guide
 export function fromScript(el: HTMLScriptElement | null): GuidesController | null {
   const guides = el?.getAttribute('data-guides');
   if (!el || !guides) return null;
-  return mount({ guides, launcher: launcherOf(el.getAttribute('data-launcher')), perform: el.getAttribute('data-perform') === 'true' });
+  const links = (el.getAttribute('data-links') ?? '').toLowerCase();
+  return mount({
+    guides,
+    launcher: launcherOf(el.getAttribute('data-launcher')),
+    perform: el.getAttribute('data-perform') === 'true',
+    links: links === 'off' || links === 'false' ? false : links === 'overlay' ? 'overlay' : true,
+  });
 }
 
 /** The guides mounted from the script tag, if it had data-guides. */

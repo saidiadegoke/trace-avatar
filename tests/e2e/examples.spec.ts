@@ -170,7 +170,7 @@ test('guides example: one script tag; the launcher and the page’s own buttons 
   await page.waitForFunction(() => (window as any).TraceAvatarAuto?.guides?.manifest);
   await launcher.locator('.fab').click();
   await expect(launcher.locator('.t')).toHaveText(['Create an invoice', 'Send an invoice']);
-  await expect(launcher.locator('.menu button')).toHaveText(['Show me', 'Do it for me', 'Show me']);
+  await expect(launcher.locator('.menu .go')).toHaveText(['Show me', 'Do it for me', 'Show me']);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Show me how' }).click();
   await expect(page.locator('[data-trace-avatar]:not([data-trace-avatar=launcher])').locator('.bubble')).toHaveText(/Let’s create an invoice/);
@@ -183,7 +183,7 @@ test('React example, AppGuides: <TraceGuides> gives a launcher and data-trace-gu
   await page.goto('/tests/e2e/fixtures/react-example.html?example=guides');
   const launcher = page.locator('[data-trace-avatar=launcher]');
   await launcher.locator('.fab').click();
-  await expect(launcher.locator('.menu button')).toHaveText(['Show me', 'Do it for me']);
+  await expect(launcher.locator('.menu .go')).toHaveText(['Show me', 'Do it for me']);
   await launcher.getByRole('menuitem', { name: 'Do it for me: Create an invoice' }).click();
   await expect(page.locator('#sent')).toHaveText('Sent to Ada Stores', { timeout: 15_000 });
   await expect(launcher.locator('.fab')).toHaveText('?', { timeout: 10_000 });
