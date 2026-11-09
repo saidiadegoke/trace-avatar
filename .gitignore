@@ -8,3 +8,4 @@ playwright-report
 _site
 tests/e2e/fixtures/react-form.js
 tests/e2e/fixtures/react-example.js
+src/export/gif-source.generated.ts

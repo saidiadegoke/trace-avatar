@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>export fixture</title>
+  <style>
+    body { margin: 0; font: 16px system-ui, sans-serif; }
+    #app { position: absolute; left: 0; top: 0; width: 400px; height: 300px; background: #fff; }
+    #go { position: absolute; left: 40px; top: 40px; }
+    #status { position: absolute; left: 40px; top: 120px; }
+    #side { position: absolute; left: 420px; top: 0; }
+  </style>
+</head>
+<body>
+  <div id="app"><button id="go">Save</button><div id="status">Loading…</div></div>
+  <p id="side">Outside the area</p>
+  <script src="/dist/trace.min.js"></script>
+  <script src="/dist/trace-export.min.js"></script>
+  <script>
+    // The app is slow on purpose: "Ready" 3 s after the guide starts playing.
+    const status = document.getElementById('status');
+    const c = TraceAvatar.createTrace({
+      trace: {
+        version: 1,
+        meta: { title: 'Wait, then save!', viewport: { w: 800, h: 600 } },
+        avatar: { name: 'Ren', color: '#ff00aa' },
+        steps: [
+          { type: 'wait', target: { sel: '#status' }, until: { text: 'Ready' }, say: 'It loads…', timeout: 10000 },
+          { type: 'click', target: { sel: '#go' }, say: 'Save it' },
+        ],
+      },
+      autoplay: false, controls: false,
+    });
+    window.__phase = 'idle';
+    let timer = 0;
+    c.on('state', ({ phase }) => {
+      window.__phase = phase;
+      if (phase === 'playing' && !timer) timer = setTimeout(() => { status.textContent = 'Ready'; }, 3000);
+    });
+    const b64 = (blob) => new Promise((r) => { const f = new FileReader(); f.onload = () => r(String(f.result).split(',')[1]); f.readAsDataURL(blob); });
+    window.__save = (opts = {}) => TraceAvatarExport.saveVideo(c, { area: document.getElementById('app'), ...opts })
+      .then(async (v) => ({ type: v.type, durationMs: v.durationMs, filename: v.filename, size: v.blob.size, b64: await b64(v.blob) }), (e) => ({ error: e.reason, message: e.message, name: e.name }));
+  </script>
+</body>
+</html>

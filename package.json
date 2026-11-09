@@ -4,7 +4,9 @@
   "description": "Turn a list of steps into a smooth, human-looking ghost-cursor walkthrough on your real page. Element-anchored, zero dependencies.",
   "main": "./dist/index.cjs",
   "scripts": {
-    "build": "tsup",
+    "build": "node scripts/gif-worker.mjs && tsup",
+    "pretypecheck": "node scripts/gif-worker.mjs",
+    "pretest": "node scripts/gif-worker.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -37,7 +39,9 @@
     "ajv": "^8.20.0",
     "esbuild": "^0.27.7",
     "fast-check": "^4.10.2",
+    "gifenc": "^1.0.3",
     "happy-dom": "^21.0.4",
+    "omggif": "^1.0.10",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "size-limit": "^14.3.0",
@@ -84,6 +88,11 @@
       "types": "./dist/studio.d.ts",
       "import": "./dist/studio.js",
       "require": "./dist/studio.cjs"
+    },
+    "./export": {
+      "types": "./dist/export.d.ts",
+      "import": "./dist/export.js",
+      "require": "./dist/export.cjs"
     },
     "./schema.json": "./schema/trace.v1.json",
     "./guides.schema.json": "./schema/guides.v1.json",
@@ -177,6 +186,25 @@
       "name": "studio CDN (trace-studio.min.js)",
       "path": "dist/trace-studio.min.js",
       "limit": "14.5 KB"
+    },
+    {
+      "name": "export (npm, before a GIF loads its encoder)",
+      "path": "dist/export.js",
+      "import": "{ saveVideo }",
+      "ignore": [
+        "./export-gif.js"
+      ],
+      "limit": "4 KB"
+    },
+    {
+      "name": "export CDN (trace-export.min.js)",
+      "path": "dist/trace-export.min.js",
+      "limit": "4 KB"
+    },
+    {
+      "name": "GIF encoder chunk (trace-gif.min.js, loaded for a GIF)",
+      "path": "dist/trace-gif.min.js",
+      "limit": "5.5 KB"
     }
   ],
   "homepage": "https://saidiadegoke.github.io/trace-avatar/",

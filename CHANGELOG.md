@@ -4,6 +4,14 @@
 
 - README GIFs of Show me and Do it for me (`media/`), rendered with the new trace-avatar-render.
 - The vanilla example takes `?mode=off` (no guide starts; for renderers that bring their own player).
+- **Save as video:** `trace-avatar/export` (CDN `trace-export.min.js`, global `TraceAvatarExport`).
+  `saveVideo(controller, { format: 'gif' | 'video', area, width, fps, maxWaitMs, pauseHoldMs, leadMs, holdEndMs,
+  signal, onProgress })` asks to share the tab, plays the guide from step 1 and returns `{ blob, type, durationMs,
+  filename, download() }`. Long waits are cut while recording (the renderer's rule); pause steps play on after
+  1.2 s; a Do it for me hand-off waits for the viewer and that wait is cut too. GIF frames are encoded as they come
+  in a worker (gifenc, bundled into `trace-gif.min.js` / the `export-gif` chunk, loaded only for a GIF); the
+  palette comes from the first second plus the avatar's colour and greys. Video uses MediaRecorder (WebM, or MP4).
+  Errors are `ExportError` with a `reason`. The playground has a "Save as video" button.
 
 ## 0.1.6
 

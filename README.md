@@ -440,7 +440,33 @@ npx trace-avatar-render invoice.trace.json --url http://localhost:3000/app --out
 ```
 
 The GIFs at the top of this page are made that way from `examples/vanilla-html` (`?mode=off` loads it with no
-guide running, for the renderer to bring its own).
+guide running, for the renderer to bring its own). It can also put the app in a browser window, zoom in on each
+action, burn in captions, and write VTT captions, a poster and title cards.
+
+### Save as video, in the browser
+
+No server needed: `trace-avatar/export` records the guide playing on the page itself. The browser asks to share
+the tab, the guide plays from step 1, and you get a GIF or a video (WebM, or MP4 in Safari). Long waits are cut the
+same way as the renderer cuts them.
+
+```js
+import { saveVideo } from 'trace-avatar/export';
+
+const v = await saveVideo(controller, {
+  format: 'gif',                              // or 'video'
+  area: document.querySelector('#app'),       // what to keep; default the whole viewport
+  onProgress: (p) => console.log(p.phase),    // 'asking' | 'recording' | 'encoding'
+});
+v.download();                                 // "send-an-invoice.gif", from the trace's title
+```
+
+Without a bundler: `<script src="https://unpkg.com/trace-avatar/dist/trace-export.min.js">` and
+`TraceAvatarExport.saveVideo(controller, …)`. It rejects with an `ExportError` whose `reason` is `unsupported`,
+`denied` (sharing refused), `cancelled` (sharing stopped, or `signal` aborted), `stalled` or `failed`. The GIF
+encoder ([gifenc](https://github.com/mattdesl/gifenc), bundled) loads only for a GIF and runs in a worker; a page
+whose Content-Security-Policy restricts workers needs `worker-src blob:`. A guide that changes pages with a full
+page load can't be saved this way (the page doing the recording goes away); use trace-avatar-render for those. The
+[playground](https://saidiadegoke.github.io/trace-avatar/playground/) has a "Save as video" button.
 
 ## What it does not do (yet)
 
@@ -450,8 +476,8 @@ guide running, for the renderer to bring its own).
 ## Size
 
 About 14 KB min+brotli for the player (locators, overlay, controls, validation, pages, waits); perform mode is a
-separate 15 KB entry (player + hands), the recorder a separate 9 KB one, the studio about 14 KB (loaded only for authors), and the guides loader about
-6 KB until its first play. `size-limit` guards each in CI.
+separate 15 KB entry (player + hands), the recorder a separate 9 KB one, the studio about 14 KB (loaded only for authors), the guides loader about
+6 KB until its first play, and Save as video 2.5 KB (plus 5 KB for the GIF encoder, loaded only for a GIF). `size-limit` guards each in CI.
 
 ## Contributing
 
