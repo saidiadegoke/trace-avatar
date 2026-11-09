@@ -673,4 +673,21 @@ describe('perform mode, prepare, reset, resume, until (0.1.2)', () => {
     clock.run(2000);
     expect(t.index).toBe(1);
   });
+
+  it('an until that times out reports the texts that showed while it waited (what the app said instead)', async () => {
+    const tr: Trace = { version: 1, steps: [{ type: 'wait', until: { text: 'Saved' }, timeout: 1000 }, { type: 'note', say: 'x' }] };
+    const t = make({ trace: tr });
+    const stalls: unknown[] = [];
+    t.on('stalled', (d) => stalls.push(d));
+    await t.ready;
+    t.play();
+    clock.run(300);
+    const toast = Object.assign(document.createElement('p'), { textContent: 'Invoice stored' });
+    setRect(toast, 0, 0);
+    document.body.append(toast);
+    await new Promise((r) => setTimeout(r, 0));
+    clock.run(1500);
+    expect(stalls).toEqual([expect.objectContaining({ index: 0, reason: 'until-timeout', seen: [{ text: 'Invoice stored', element: toast }] })]);
+    toast.remove();
+  });
 });

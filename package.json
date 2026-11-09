@@ -136,7 +136,7 @@
     {
       "name": "core (ESM)",
       "path": "dist/index.js",
-      "limit": "14 KB"
+      "limit": "14.25 KB"
     },
     {
       "name": "react adapter (TraceAvatar, useTrace) + core",
@@ -144,7 +144,7 @@
       "ignore": [
         "react"
       ],
-      "limit": "14 KB",
+      "limit": "14.25 KB",
       "import": "{ TraceAvatar, useTrace }"
     },
     {
@@ -162,12 +162,12 @@
     {
       "name": "CDN build",
       "path": "dist/trace.min.js",
-      "limit": "14.25 KB"
+      "limit": "14.5 KB"
     },
     {
       "name": "perform (core + performer)",
       "path": "dist/perform.js",
-      "limit": "15.5 KB"
+      "limit": "15.75 KB"
     },
     {
       "name": "recorder",
@@ -234,7 +234,7 @@
     {
       "name": "Fix this step (trace-fix.min.js, loaded when an author meets a stalled step)",
       "path": "dist/trace-fix.min.js",
-      "limit": "7 KB"
+      "limit": "8.25 KB"
     },
     {
       "name": "repair (candidates on a page, re-recording one as a target; reuses the recorder's buildTarget and the player's locators)",

@@ -18,7 +18,7 @@ import { createPage } from './shell/page.dom';
 import type { Performer } from './shell/perform.dom';
 import type { PageOptions } from './shell/page.dom';
 import { browserClock } from './shell/ports';
-import type { ClockPort, InputPort, Locator, PagePort, RendererPort } from './shell/ports';
+import type { ClockPort, InputPort, Locator, PagePort, RendererPort, SeenText } from './shell/ports';
 import { createRenderer } from './shell/renderer.shadow';
 import type { CaptionMode, Command, RendererOptions } from './shell/renderer.shadow';
 
@@ -28,11 +28,20 @@ export type { Phase, View, ResolvedBy, Look } from './core/player';
 export { formatKeys } from './core/player';
 export { simplify } from './core/motion';
 export { bySelector, byRoleAndName, byText, accessibleName, isUsable, DEFAULT_LOCATORS } from './shell/page.dom';
-export type { Locator, ClockPort, PagePort, RendererPort, InputPort } from './shell/ports';
+export type { Locator, ClockPort, PagePort, RendererPort, InputPort, SeenText } from './shell/ports';
 export type { Performer } from './shell/perform.dom';
 
 export interface StepEvent { index: number; step: NStep; resolvedBy: ResolvedBy | null; element: Element | null }
-export interface StalledEvent { index: number; step: NStep; reason: 'not-found' | 'wait-timeout' | 'until-timeout' }
+export interface StalledEvent {
+  index: number;
+  step: NStep;
+  reason: 'not-found' | 'wait-timeout' | 'until-timeout';
+  /**
+   * until-timeout: short texts the page showed around the wait (from 2 s before it), newest first, with their
+   * elements: what the app said instead. Unfiltered: trace-avatar/repair's textsOf decides what may be offered.
+   */
+  seen?: SeenText[];
+}
 /** Perform mode reached a masked field: the viewer types it, then presses play. */
 export interface HandoffEvent { index: number; step: NStep; element: Element | null }
 /** `prepare` said no (or threw): the guide did not start. */
@@ -294,7 +303,7 @@ export function createTrace(opts: TraceOptions): TraceController {
           scrollFor(tr.steps[f.i]);
           break;
         case 'stalled':
-          emitter.emit('stalled', { index: f.i, step: tr.steps[f.i], reason: f.reason });
+          emitter.emit('stalled', { index: f.i, step: tr.steps[f.i], reason: f.reason, ...(f.reason === 'until-timeout' && page.seen ? { seen: page.seen() } : {}) });
           break;
         case 'page': {
           const at = where() ?? '';

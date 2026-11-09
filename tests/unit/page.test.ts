@@ -361,6 +361,66 @@ describe('until (0.1.2)', () => {
     spy.mockRestore();
   });
 
+  it('notes the texts the page showed for a guide with until: from 2 s before the wait, newest first, short, visible or come-and-gone, not the guide’s own, at most 20', async () => {
+    html('<span id="status">Queued</span><input id="f">');
+    let clockMs = 100_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clockMs);
+    const page = createPage();
+    const t = tr();
+    page.until!(t, 0);                                    // the guide has until steps: start noting
+    const add = (text: string, where: Element = document.body, shown = true) => {
+      const p = where.appendChild(Object.assign(document.createElement('p'), { textContent: text }));
+      if (shown) setRect(p, 0, 0);
+      return p;
+    };
+    add('Long before');
+    await flush();
+    clockMs += 5000;
+    add('Changes   stored');                              // the app's answer, just before the wait asks
+    add('x'.repeat(61));
+    add('Not visible', document.body, false);
+    const toast = add('Invoice stored');
+    const ui = document.body.appendChild(document.createElement('div'));
+    ui.setAttribute('data-trace-avatar', '');
+    add('Looking for “Saved”…', ui);
+    add('Save', document.body.appendChild(document.createElement('button')));
+    (document.getElementById('f') as HTMLInputElement).value = 'typed';
+    await flush();
+    clockMs += 500;
+    expect(page.seen!()).toEqual([]);                    // no wait yet
+    page.until!(t, 300)(1);
+    document.getElementById('status')!.textContent = 'Running';
+    toast.textContent = '';                               // came and went: still counts
+    await flush();
+    expect(page.seen!().map((x) => x.text)).toEqual(['Running', 'Save', 'Invoice stored', 'Changes stored']);
+    expect(page.seen!()[0].element).toBe(document.getElementById('status'));   // where: textsOf filters by it
+    for (let k = 0; k < 25; k += 1) add(`toast ${k}`);
+    await flush();
+    expect(page.seen!()).toHaveLength(20);
+    expect(page.seen!()[0].text).toBe('toast 24');
+    // Another wait, much later, starts afresh; clear() forgets.
+    clockMs += 10_000;
+    page.until!(t, 600)(0);
+    expect(page.seen!()).toEqual([]);
+    page.clear();
+    expect(page.seen!()).toEqual([]);
+    now.mockRestore();
+  });
+
+  it('a guide with no until step notes nothing', async () => {
+    html('<p>x</p>');
+    const r = parse({ version: 1, steps: [{ type: 'wait', until: { text: 'A' } }, { type: 'note', say: 'x' }] });
+    const plain = parse({ version: 1, steps: [{ type: 'note', say: 'x' }] });
+    if (!r.ok || !plain.ok) throw new Error('bad');
+    const page = createPage();
+    page.until!(plain.trace, 0);
+    const p = document.body.appendChild(Object.assign(document.createElement('p'), { textContent: 'Changes stored' }));
+    setRect(p, 0, 0);
+    await flush();
+    page.until!(r.trace, 10)(0);
+    expect(page.seen!()).toEqual([]);
+  });
+
   it('without MutationObserver it rechecks every 250 ms; clear() forgets and stops watching', async () => {
     html('<span id="status">Queued</span>');
     const win = Object.create(window, { MutationObserver: { value: undefined } }) as Window;

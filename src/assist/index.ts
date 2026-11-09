@@ -16,7 +16,8 @@ import type { Trace } from '../core/format';
 
 export { apply, applyRaw, payload as preview, parseJsonReply, toSuggestions, toDescription, CAPS } from '../core/assist';
 export type { Ai, AssistOptions, AssistTask, Dropped, Hint, Suggestion } from '../core/assist';
-export { scoreCandidates, clearWinner, similarity, repairPayload, toRepairChoice, targetLabel, chooseRepair, repairSuggestion, CLEAR } from '../core/repair';
+export { scoreCandidates, clearWinner, similarity, repairPayload, toRepairChoice, targetLabel, chooseRepair, repairSuggestion, CLEAR, scoreTexts, waitPayload, toWaitChoice, chooseWait, waitSuggestion, removeStep, typedOf, guessWait, GUESS_MIN } from '../core/repair';
+export type { TextCandidate, WaitChoice } from '../core/repair';
 export type { Candidate, Scored, RepairChoice } from '../core/repair';
 
 export class AssistError extends Error {

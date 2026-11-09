@@ -11,7 +11,7 @@ import { makeLink, pendingOk, readLink } from '../core/links';
 import type { Pending } from '../core/links';
 import type { GuideMode, Manifest, NGuide, NManifest } from '../core/manifest';
 import type { Avatar } from '../core/format';
-import type { PrepareResult, TraceController, TraceOptions } from '../index';
+import type { PrepareResult, SeenText, TraceController, TraceOptions } from '../index';
 import type { NormalisedTrace } from '../core/format';
 import { createEmitter } from '../shell/emitter';
 import { createLauncher } from '../shell/launcher.dom';
@@ -252,7 +252,7 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     store.set(g.id, mode);
     launcher?.setPlaying(true);
     c.on('error', (e) => { report(new GuideError(e.message, g.id)); });
-    c.on('stalled', (d) => { if (d.reason === 'not-found' && current === entry) void offerFix(entry, g, d.index); });
+    c.on('stalled', (d) => { if ((d.reason === 'not-found' || d.reason === 'until-timeout') && current === entry) void offerFix(entry, g, d.index, d.reason, d.seen); });
     c.on('end', () => {
       if (current !== entry) return;
       store.clear();
@@ -273,8 +273,11 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
 
   function stop() { clearCurrent('stop'); }
 
-  /** An author meets a step that can't find its element: offer to fix it there. Others see nothing new. */
-  async function offerFix(entry: GuideEvent & { controller: TraceController }, g: NGuide, index: number) {
+  /**
+   * An author meets a step that can't find its element, or a wait whose text never showed: offer to fix it
+   * there. Others see nothing new.
+   */
+  async function offerFix(entry: GuideEvent & { controller: TraceController }, g: NGuide, index: number, reason: 'not-found' | 'until-timeout', seen?: SeenText[]) {
     if ((fix && fix.state !== 'fixed' && fix.state !== 'closed') || !rec || !loaders.fix) return;
     try { if (!(await rec.allowed())) return; } catch { return; }
     if (current !== entry || destroyed) return;
@@ -287,11 +290,13 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     if (current !== entry || destroyed || (fix && fix.state !== 'fixed' && fix.state !== 'closed')) return;
     fix?.close();
     fix = mod.offerFix({
-      doc, trace: raw, index, ai: rec.ai,
+      doc, trace: raw, index, reason, ...(seen ? { seen } : {}), ai: rec.ai,
       entry: { id: g.id, title: g.title, trace: g.trace, ...(g.modes?.length ? { modes: [...g.modes] } : {}), ...(g.pages?.length ? { pages: [...g.pages] } : {}), ...(g.tags?.length ? { tags: [...g.tags] } : {}) },
       ...(rec.save ? { save: rec.save } : {}),
       onFixed: (t, i) => {
         fixedTraces.set(g.id, t);
+        // Past the end (the last step was a wait, now met or removed): the guide is done.
+        if (i >= t.steps.length) { if (current === entry) clearCurrent('end'); return; }
         void play(g.id, { mode: entry.mode, startAt: i });   // the card stays, to save
       },
       onStop: () => { fix = null; stop(); },

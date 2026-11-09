@@ -8,7 +8,7 @@
 import { validate } from './format';
 import type { Step, Target, Trace } from './format';
 
-export type AssistTask = 'captions' | 'waits' | 'title' | 'describe' | 'qa' | 'repair';
+export type AssistTask = 'captions' | 'waits' | 'title' | 'describe' | 'qa' | 'repair' | 'repair-wait';
 
 /** A provider: one call per task, returning JSON for the schema. Any model, any transport. */
 export type Ai = (
@@ -32,8 +32,11 @@ export interface AssistOptions {
 
 export interface Suggestion {
   task: 'captions' | 'waits' | 'title' | 'repair';
-  /** captions: the step's caption; waits: a new wait step after `index`; title: meta.title; repair: a new target. */
-  kind: 'say' | 'wait' | 'title' | 'target';
+  /**
+   * captions: the step's caption; waits: a new wait step after `index`; title: meta.title; repair: a new target,
+   * or (`until`) the text a wait step waits for.
+   */
+  kind: 'say' | 'wait' | 'title' | 'target' | 'until';
   /** Step index (from 0): the step captioned, or the step the wait goes after. -1 for the title. */
   index: number;
   value: string;
@@ -74,7 +77,7 @@ const stepsOf = (trace: Trace, o: AssistOptions) => {
   return trace.steps.map((s, i) => { if (s.page) page = s.page; return describeStep(s, i, page, o); });
 };
 
-const SCHEMAS: Record<Exclude<AssistTask, 'qa' | 'repair'>, Record<string, unknown>> = {
+const SCHEMAS: Record<Exclude<AssistTask, 'qa' | 'repair' | 'repair-wait'>, Record<string, unknown>> = {
   captions: { type: 'object', required: ['steps'], properties: { steps: { type: 'array', items: { type: 'object', required: ['n', 'say'], properties: { n: { type: 'integer' }, say: { type: 'string', maxLength: CAPS.say } } } } } },
   waits: { type: 'object', required: ['waits'], properties: { waits: { type: 'array', items: { type: 'object', required: ['after', 'text'], properties: { after: { type: 'integer' }, text: { type: 'string' }, why: { type: 'string' } } } } } },
   title: { type: 'object', required: ['title'], properties: { title: { type: 'string', maxLength: CAPS.title } } },
@@ -88,7 +91,7 @@ const TONES = {
 };
 
 /** Exactly what a task sends: the input, the schema of the answer, and the instructions. */
-export function payload(task: Exclude<AssistTask, 'qa' | 'repair'>, trace: Trace, o: AssistOptions = {}): { input: unknown; schema: Record<string, unknown>; instructions: string } {
+export function payload(task: Exclude<AssistTask, 'qa' | 'repair' | 'repair-wait'>, trace: Trace, o: AssistOptions = {}): { input: unknown; schema: Record<string, unknown>; instructions: string } {
   const steps = stepsOf(trace, o);
   const title = trace.meta?.title;
   const schema = SCHEMAS[task];
@@ -133,6 +136,7 @@ export function applyRaw(trace: Trace, accepted: readonly Suggestion[]): Trace {
     if (s.kind === 'say' && out.steps[s.index]) out.steps[s.index].say = s.value;
     if (s.kind === 'title') out.meta = { ...(out.meta ?? {}), title: s.value };
     if (s.kind === 'target' && s.target && out.steps[s.index]) out.steps[s.index].target = s.target;
+    if (s.kind === 'until' && out.steps[s.index]?.until) out.steps[s.index].until = { text: s.value };
   }
   // Inserts last, from the end, so earlier indexes stay right.
   const waits = accepted.filter((s) => s.kind === 'wait').slice().sort((a, b) => b.index - a.index);

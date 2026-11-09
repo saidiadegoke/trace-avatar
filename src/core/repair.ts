@@ -90,7 +90,7 @@ const label = (t: Pick<Target, 'role' | 'name' | 'text' | 'sel'> | Candidate | u
 export { label as targetLabel };
 
 /** Typed values in the trace (what was typed is never sent, even when the page shows it back). */
-const typedOf = (trace: Trace): string[] => trace.steps.filter((s) => s.type === 'type' && typeof s.text === 'string' && s.text.trim().length >= 3).map((s) => s.text!.trim().toLowerCase());
+export const typedOf = (trace: Trace): string[] => trace.steps.filter((s) => s.type === 'type' && typeof s.text === 'string' && s.text.trim().length >= 3).map((s) => s.text!.trim().toLowerCase());
 
 const describe = (trace: Trace, i: number) => {
   const s = trace.steps[i];
@@ -171,3 +171,118 @@ export function repairSuggestion(trace: Trace, index: number, target: Target, o:
   };
 }
 
+
+// ── E8: a wait whose text changed ("Saved" became "Changes saved") ─────────────────────────────────
+
+/** A short text block on the page, or one that showed while the wait waited (`recent`). */
+export interface TextCandidate {
+  id: number;
+  text: string;
+  /** It appeared or changed while the step waited: what the app showed after the action. */
+  recent?: boolean;
+  /** Seen while waiting but no longer on the page (a toast that came and went). */
+  gone?: boolean;
+}
+
+/** Every text scored against the text the wait was waiting for (best first); recent ones get a bonus. */
+export function scoreTexts(old: string | undefined, candidates: readonly TextCandidate[]): Scored[] {
+  return candidates
+    .map((c) => ({ id: c.id, score: Math.round(Math.min(1, similarity(old, c.text) + (c.recent ? 0.2 : 0)) * 1000) / 1000 }))
+    .sort((a, b) => b.score - a.score || a.id - b.id);
+}
+
+const WAIT_INSTRUCTIONS = 'A step of a screen guide waits for a text the app shows after an action (such as "Saved"), but the app now words it differently. From the texts on the page (those marked recent appeared while the step waited), pick the one that means the same thing. You may answer a shorter part of a text, copied exactly. If none means the same, answer id null. Answer with JSON: { "id": <text id or null>, "text": "<optional exact part of that text>", "why": "<one short sentence>" }.';
+export const WAIT_SCHEMA = { type: 'object', properties: { id: { type: ['integer', 'null'] }, text: { type: 'string' }, why: { type: 'string' } }, required: ['id'] };
+
+/** What an AI is asked about a wait: the step, the steps around it, and the best `max` texts (nothing typed). */
+export function waitPayload(trace: Trace, index: number, texts: readonly TextCandidate[], o: { max?: number } = {}): { input: unknown; schema: Record<string, unknown>; instructions: string; sent: number[] } {
+  const typed = typedOf(trace);
+  const clean = texts.filter((c) => !typed.some((v) => c.text.toLowerCase().includes(v)));
+  const order = scoreTexts(trace.steps[index]?.until?.text, clean).slice(0, o.max ?? 30).map((s) => s.id);
+  const byId = new Map(clean.map((c) => [c.id, c]));
+  const step = trace.steps[index];
+  return {
+    input: {
+      title: trace.meta?.title ?? null,
+      step: { n: index + 1, waited_for: step?.until?.text ?? null, ...(step?.say ? { say: step.say } : {}) },
+      before: [describe(trace, index - 2), describe(trace, index - 1)].filter(Boolean),
+      after: [describe(trace, index + 1)].filter(Boolean),
+      texts: order.map((id) => ({ id, text: byId.get(id)!.text.slice(0, 60), ...(byId.get(id)!.recent ? { recent: true } : {}) })),
+    },
+    schema: WAIT_SCHEMA,
+    instructions: WAIT_INSTRUCTIONS,
+    sent: order,
+  };
+}
+
+/** The AI's pick: one of the texts sent, and a part of it only when that part really is in it. */
+export function toWaitChoice(answer: unknown, sent: readonly number[], texts: readonly TextCandidate[]): { id: number | null; text?: string; why?: string } {
+  const a = (answer ?? {}) as { id?: unknown; text?: unknown; why?: unknown };
+  const why = typeof a.why === 'string' ? a.why.replace(/\s+/g, ' ').trim().slice(0, 140) : undefined;
+  const c = typeof a.id === 'number' && sent.includes(a.id) ? texts.find((t) => t.id === a.id) : undefined;
+  if (!c) return { id: null, ...(why ? { why } : {}) };
+  let text = c.text;
+  if (typeof a.text === 'string' && a.text.trim()) {
+    const part = a.text.replace(/\s+/g, ' ').trim();
+    const at = c.text.toLowerCase().indexOf(part.toLowerCase());
+    if (at < 0) return { id: null, ...(why ? { why } : {}) };   // not on the page: never invented
+    text = c.text.slice(at, at + part.length);
+  }
+  return { id: c.id, text, ...(why ? { why } : {}) };
+}
+
+export interface WaitChoice {
+  id: number | null;
+  /** The text to wait for: the candidate's, or the part of it the AI chose. */
+  text?: string;
+  by: 'score' | 'ai' | 'none';
+  score?: number;
+  why?: string;
+  top: Scored[];
+}
+
+/** Which text a wait means now: code scores them first, and an AI is asked only when no text is a clear winner. */
+export async function chooseWait(trace: Trace, index: number, texts: readonly TextCandidate[], o: { ai?: Ai } = {}): Promise<WaitChoice> {
+  const typed = typedOf(trace);
+  const usable = texts.filter((c) => !typed.some((v) => c.text.toLowerCase().includes(v)));
+  const scored = scoreTexts(trace.steps[index]?.until?.text, usable);
+  const top = scored.slice(0, 3);
+  const win = clearWinner(scored);
+  if (win) return { id: win.id, text: usable.find((c) => c.id === win.id)!.text, by: 'score', score: win.score, top };
+  if (!o.ai) return { id: null, by: 'none', top };
+  const p = waitPayload(trace, index, usable);
+  if (!p.sent.length) return { id: null, by: 'none', top };
+  const c = toWaitChoice(await o.ai('repair-wait', p.input, p.schema, { instructions: p.instructions }), p.sent, usable);
+  return { id: c.id, by: c.id === null ? 'none' : 'ai', ...(c.text ? { text: c.text } : {}), ...(c.id !== null ? { score: scored.find((x) => x.id === c.id)?.score ?? 0 } : {}), ...(c.why ? { why: c.why } : {}), top };
+}
+
+/** A wait repair as a suggestion that apply() takes: the text the step now waits for. */
+export function waitSuggestion(trace: Trace, index: number, text: string, o: { why?: string; verified?: boolean } = {}): Suggestion {
+  return {
+    task: 'repair', kind: 'until', index, value: text, ...(trace.steps[index]?.until?.text ? { before: trace.steps[index].until!.text } : {}),
+    ...(o.why ? { why: o.why } : {}), ...(o.verified !== undefined ? { verified: o.verified } : {}),
+  };
+}
+
+/** A text or element scored at least this is worth offering as a guess, for a person (or a replay) to check. */
+export const GUESS_MIN = 0.5;
+
+/**
+ * The text to offer when nothing is sure: the choice when there is one; else the best text when it scores at
+ * least GUESS_MIN; else what showed most recently while it waited (what the app said after the action).
+ */
+export function guessWait(c: WaitChoice, texts: readonly TextCandidate[]): { id: number; text: string; guess: boolean } | null {
+  if (c.id !== null && c.text) return { id: c.id, text: c.text, guess: false };
+  const top = c.top[0] && c.top[0].score >= GUESS_MIN ? texts.find((t) => t.id === c.top[0].id) : undefined;
+  const r = top ?? texts.find((t) => t.recent);
+  return r ? { id: r.id, text: r.text, guess: true } : null;
+}
+
+/** The guide without step `index` (a wait the app no longer needs); its caption moves to the next step when that has none. */
+export function removeStep(trace: Trace, index: number): Trace {
+  const out: Trace = JSON.parse(JSON.stringify(trace));
+  const [gone] = out.steps.splice(index, 1);
+  const next = out.steps[index];
+  if (gone?.say && next && !next.say) next.say = gone.say;
+  return out;
+}

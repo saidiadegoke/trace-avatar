@@ -9,11 +9,12 @@
  */
 
 import type { Target } from '../core/format';
-import type { Candidate } from '../core/repair';
-import { accessibleName, DEFAULT_LOCATORS, isUsable } from '../shell/page.dom';
+import type { SeenText } from '../shell/ports';
+import type { Candidate, TextCandidate } from '../core/repair';
+import { accessibleName, byText, DEFAULT_LOCATORS, isUsable } from '../shell/page.dom';
 import { buildTarget, isEditableTarget, looksGenerated, roleOf } from '../shell/selector.dom';
 
-export type { Candidate } from '../core/repair';
+export type { Candidate, TextCandidate } from '../core/repair';
 
 /** Roles a step acts on. Elements without a role (a label, a focusable div) count when they have a name. */
 const ACT_ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'checkbox', 'radio', 'combobox', 'option', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'switch', 'slider', 'spinbutton', 'treeitem', 'gridcell', 'row', 'listitem']);
@@ -26,7 +27,7 @@ export const SKIP = '[data-trace-ignore], [data-trace-avatar], [data-trace-blur]
 
 const clean = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
 
-let last: Element[] = [];
+let last: Array<Element | null> = [];
 
 /** The closest heading or labelled region around an element. */
 function nearOf(el: Element): string | undefined {
@@ -98,6 +99,83 @@ export function resolvesTo(target: Target, el: Element | null, root: ParentNode 
   for (const find of DEFAULT_LOCATORS) {
     const found = find(target, root, undefined as never); // the default locators don't look at the step
     if (found) return found === el;
+  }
+  return false;
+}
+
+/**
+ * Never read as text a wait might mean: fields, controls (a wait is for what the app says, not a button's
+ * label), masked, ignored and blurred areas, and the guide's own UI.
+ */
+export const NOT_TEXT = 'input, textarea, select, [contenteditable], button, a[href], label, summary, option, [role=button], [role=link], [role=tab], [role=menuitem], [data-trace-mask], [data-trace-ignore], [data-trace-blur], [data-trace-avatar], script, style, noscript, template';
+const INLINE = /^(B|I|EM|STRONG|SPAN|A|SMALL|MARK|CODE|U|S|SUB|SUP|TIME|ABBR|Q)$/;
+
+/**
+ * Values that may never be offered, even when the page shows them back: what is in a field that would be
+ * masked (every field not marked [data-trace-reveal], and passwords always).
+ */
+function maskedValues(doc: Document): string[] {
+  return Array.from(doc.querySelectorAll('input, textarea'))
+    .filter((el) => (el as HTMLInputElement).type === 'password' || !el.closest('[data-trace-reveal]'))
+    .map((el) => ((el as HTMLInputElement).value ?? '').trim().toLowerCase())
+    .filter((v) => v.length >= 3);
+}
+
+/**
+ * What a wait could be waiting for now: the short text blocks (2 to 60 characters) inside `scope` (the wait's
+ * target, or the page), plus `seen` (texts that showed while it waited, from the stalled event). Seen ones
+ * (strings, or the stalled event's `{ text, element }`) come first, marked `recent`; one no longer on the page is `gone` and has no element. Never offered: field
+ * values, masked, ignored and blurred areas, the guide's own UI, and any text holding a typed value
+ * (`typed`, lower-case) or the value of a masked field.
+ */
+export function textsOf(scope: ParentNode = document, o: { seen?: ReadonlyArray<string | SeenText>; typed?: readonly string[]; max?: number } = {}): TextCandidate[] {
+  const doc = (scope as Node).ownerDocument ?? (scope as Document);
+  const banned = [...(o.typed ?? []), ...maskedValues(doc)];
+  const ok = (t: string) => t.length >= 2 && t.length <= 60 && !banned.some((v) => t.toLowerCase().includes(v));
+  const onPage = new Map<string, Element>();
+  const walker = doc.createTreeWalker(scope as Node, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(), k = 0; n && k < 5000 && onPage.size < (o.max ?? 150); n = walker.nextNode(), k += 1) {
+    let el = n.parentElement;
+    if (!el || el.closest(NOT_TEXT) || !isUsable(el)) continue;
+    // Inline pieces belong to their block: "Changes <b>saved</b>" is one text (while it stays short, inside the scope).
+    for (let k = 0, up = el.parentElement; k < 3 && INLINE.test(el.tagName) && el !== scope && up && (scope as Node).contains(up) && clean(up.textContent).length <= 60; k += 1, up = up.parentElement) el = up;
+    const whole = clean(el.textContent);
+    const text = whole.length <= 60 ? whole : clean(n.nodeValue);
+    if (ok(text) && !onPage.has(text)) onPage.set(text, el);
+  }
+  const out: TextCandidate[] = [];
+  const els: Array<Element | null> = [];
+  // A seen text whose element is a field, a control, masked, ignored or blurred is not offered either.
+  const seen = (o.seen ?? []).filter((s) => typeof s === 'string' || !s.element.closest(NOT_TEXT)).map((s) => clean(typeof s === 'string' ? s : s.text)).filter(ok);
+  for (const t of seen) {
+    if (out.some((c) => c.text === t)) continue;
+    const el = onPage.get(t) ?? null;
+    out.push({ id: out.length, text: t, recent: true, ...(el ? {} : { gone: true }) });
+    els.push(el);
+  }
+  for (const [t, el] of onPage) {
+    if (seen.includes(t)) continue;
+    out.push({ id: out.length, text: t });
+    els.push(el);
+  }
+  last = els;
+  return out;
+}
+
+/** Where a wait on `target` looks: its element when the player finds one, else the whole page. */
+export function scopeFor(target: Target | undefined, root: ParentNode = document): ParentNode {
+  if (target) for (const find of DEFAULT_LOCATORS) { const el = find(target, root, undefined as never); if (el) return el; }
+  return root;
+}
+
+/** Whether a wait on `target` (or the page, without one) would see `text` now: the player's own check. */
+export function untilHolds(text: string, target: Target | undefined, root: ParentNode = document): boolean {
+  const want = clean(text).toLowerCase();
+  if (!want) return false;
+  if (!target) return !!byText({ text }, root, undefined as never);
+  for (const find of DEFAULT_LOCATORS) {
+    const el = find(target, root, undefined as never);
+    if (el) return clean(el.textContent).toLowerCase().includes(want);
   }
   return false;
 }

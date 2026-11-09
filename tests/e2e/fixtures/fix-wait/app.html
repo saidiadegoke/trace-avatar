@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Fix wait app</title></head>
+<body style="font:15px system-ui;padding:120px 40px 40px">
+  <!-- The app changed after the guide was recorded: after Save it says "Changes stored", not "Saved".
+       ?toast: it says "Invoice stored" for a moment, then the message goes. -->
+  <h1>Invoices</h1>
+  <p><label>Customer <input id="customer" value="Ada Stores"></label></p>
+  <button id="save">Save</button>
+  <p id="msg"></p>
+  <script>
+    window.clicks = { save: 0, msg: 0 };
+    const msg = document.getElementById('msg');
+    msg.addEventListener('click', () => { window.clicks.msg += 1; });
+    document.getElementById('save').addEventListener('click', () => {
+      window.clicks.save += 1;
+      setTimeout(() => {
+        msg.textContent = location.search.includes('toast') ? 'Invoice stored' : 'Changes stored';
+        if (location.search.includes('toast')) setTimeout(() => { msg.textContent = ''; }, 700);
+      }, 300);
+    });
+  </script>
+  <script src="/dist/trace-auto.min.js"></script>
+  <script src="/tests/e2e/fixtures/fix-wait/setup.js"></script>
+</body></html>

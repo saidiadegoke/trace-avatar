@@ -230,7 +230,7 @@ describe('offerFix: saving', () => {
     press('Try again');
     await tick();
     expect(save).toHaveBeenCalledTimes(2);
-    expect(msg()).toBe('Saved: step 2 is fixed for everyone.');
+    expect(msg()).toBe('Saved: the guide is fixed for everyone.');
     press('Close');
     expect(f.state).toBe('closed');
   });
@@ -251,7 +251,7 @@ describe('offerFix: saving', () => {
     expect(names).toEqual(['invoice.trace.json']);
     const saved = JSON.parse(await blobs[0].text()) as Trace;
     expect(saved.steps[1].target).toMatchObject({ name: 'Store invoice' });
-    expect(msg()).toBe('Downloaded invoice.trace.json with step 2 fixed.');
+    expect(msg()).toBe('Downloaded invoice.trace.json, fixed.');
   });
 });
 
@@ -291,6 +291,135 @@ const MANIFEST: Manifest = {
   ],
 };
 
+// ── E8: a wait whose text changed ─────────────────────────────────────────
+
+const WAIT: Trace = {
+  version: 1,
+  meta: { title: 'Save an invoice' },
+  steps: [
+    { type: 'type', target: { role: 'textbox', name: 'Customer' }, text: 'Ada Stores' },
+    { type: 'click', target: { role: 'button', name: 'Save' }, say: 'Save it' },
+    { type: 'wait', until: { text: 'Saved' }, say: 'Saving…' },
+    { type: 'note', say: 'Done' },
+  ],
+};
+const openWait = (o: Partial<FixOptions> = {}) => open({ trace: WAIT, index: 2, reason: 'until-timeout', ...o });
+
+describe('offerFix: a wait whose text never showed', () => {
+  it('names the text it waited for, and offers Fix, Remove this wait and Stop', () => {
+    html('<p>Changes saved</p>');
+    openWait();
+    expect(msg()).toBe('Step 3 waited for “Saved”, which never showed.');
+    expect(buttons()).toEqual(['Fix this step', 'Remove this wait', 'Stop']);
+  });
+
+  it('guesses the new wording on the page; Yes sets until.text and carries on after the wait', async () => {
+    html('<h2>Invoices</h2><p>Changes saved</p><p>Total</p>');
+    const { f, onFixed } = openWait();
+    press('Fix this step');
+    await tick();
+    expect(f.state).toBe('guess');
+    expect(msg()).toBe('Is it “Changes saved”?');
+    expect(buttons()).toEqual(['Yes', 'No, I’ll point at it', 'Cancel']);
+    press('Yes');
+    const [fixed, from] = onFixed.mock.calls[0] as [Trace, number];
+    expect(fixed.steps[2]).toEqual({ type: 'wait', until: { text: 'Changes saved' }, say: 'Saving…' });
+    expect(from).toBe(3);
+    expect(msg()).toBe('Fixed step 3: it waits for “Changes saved”.');
+    expect(WAIT.steps[2].until).toEqual({ text: 'Saved' });
+  });
+
+  it('a toast that came and went is still guessed, as seen while waiting', async () => {
+    html('<p>Invoices</p>');
+    const { onFixed } = openWait({ seen: ['Invoice stored'] });
+    press('Fix this step');
+    await tick();
+    expect(msg()).toBe('Is it “Invoice stored”? (seen while waiting)');
+    press('Yes');
+    expect((onFixed.mock.calls[0][0] as Trace).steps[2].until).toEqual({ text: 'Invoice stored' });
+  });
+
+  it('a text that shows a typed value is never offered', async () => {
+    html('<p>Saved Ada Stores</p>');
+    const ai = vi.fn();
+    const { f } = openWait({ ai });
+    press('Fix this step');
+    await tick();
+    expect(f.state).toBe('point');
+    expect(ai).not.toHaveBeenCalled();   // nothing left to send
+  });
+
+  it('asks the AI when unsure; a part of a text it names is kept, text not on the page is dropped', async () => {
+    html('<p>Invoice 12 stored at 14:02</p><p>Payment received</p>');
+    const ai = vi.fn(async () => ({ id: 0, text: 'stored', why: 'same meaning' }));
+    const { onFixed } = openWait({ ai });
+    press('Fix this step');
+    await tick();
+    expect(ai).toHaveBeenCalledWith('repair-wait', expect.anything(), expect.anything(), expect.anything());
+    expect(msg()).toBe('Is it “stored”?');
+    press('Yes');
+    expect((onFixed.mock.calls[0][0] as Trace).steps[2].until).toEqual({ text: 'stored' });
+    fixes.forEach((x) => x.close());
+    const made = vi.fn(async () => ({ id: 0, text: 'Saved!' }));
+    const { f } = openWait({ ai: made });
+    press('Fix this step');
+    await tick();
+    expect(f.state).toBe('point');
+  });
+
+  it('pointing picks the text clicked; the click never reaches the app; long or absent text is refused', async () => {
+    html('<p id="t">Changes saved</p><div id="long">' + 'x '.repeat(50) + '</div>');
+    const clicks = vi.fn();
+    document.addEventListener('click', clicks);
+    const { f, onFixed } = openWait();
+    press('Fix this step');
+    await tick();
+    press('No, I’ll point at it');
+    expect(msg()).toBe('Click the text this step should wait for. Esc to cancel.');
+    document.getElementById('long')!.click();
+    expect(f.state).toBe('point');
+    expect(msg()).toMatch(/can’t wait for that/);
+    document.getElementById('t')!.click();
+    expect(clicks).not.toHaveBeenCalled();
+    expect((onFixed.mock.calls[0][0] as Trace).steps[2].until).toEqual({ text: 'Changes saved' });
+    document.removeEventListener('click', clicks);
+  });
+
+  it('Remove this wait drops the step, moves its caption on when the next has none, and carries on there', () => {
+    html('<p>x</p>');
+    const t: Trace = { ...WAIT, steps: [...WAIT.steps.slice(0, 3), { type: 'click', target: { text: 'Next' } }] };
+    const { onFixed } = openWait({ trace: t });
+    press('Remove this wait');
+    const [fixed, from] = onFixed.mock.calls[0] as [Trace, number];
+    expect(fixed.steps).toHaveLength(3);
+    expect(fixed.steps[2]).toEqual({ type: 'click', target: { text: 'Next' }, say: 'Saving…' });
+    expect(from).toBe(2);
+    expect(msg()).toBe('Removed step 3 (the wait).');
+    expect(buttons()).toEqual(['Save the guide', 'Just this time']);
+  });
+
+  it('a wait for something to go offers only Remove and Stop; a one-step guide can’t remove its only step', () => {
+    html('<div class="spinner">…</div>');
+    const t: Trace = { version: 1, steps: [{ type: 'click', target: { text: 'Go' } }, { type: 'wait', target: { sel: '.spinner' }, until: { gone: true } }] };
+    open({ trace: t, index: 1, reason: 'until-timeout' });
+    expect(msg()).toBe('Step 2 waited for .spinner to go, and it never did.');
+    expect(buttons()).toEqual(['Remove this wait', 'Stop']);
+    fixes.forEach((x) => x.close());
+    open({ trace: { version: 1, steps: [{ type: 'wait', until: { text: 'Saved' } }] }, index: 0, reason: 'until-timeout' });
+    expect(buttons()).toEqual(['Fix this step', 'Stop']);
+  });
+
+  it('a wait on a target looks only inside it', async () => {
+    html('<div id="status">Status: running</div><p>Saved elsewhere</p>');
+    const t: Trace = { version: 1, steps: [{ type: 'click', target: { text: 'Go' } }, { type: 'wait', target: { sel: '#status' }, until: { text: 'Started' } }] };
+    const { f } = open({ trace: t, index: 1, reason: 'until-timeout', ai: async () => ({ id: 0 }) });
+    press('Fix this step');
+    await tick();
+    expect(f.state).toBe('guess');
+    expect(msg()).toBe('Is it “Status: running”?');
+  });
+});
+
 describe('mount: Fix this step', () => {
   let mounted: GuidesController[] = [];
   const go = (record: Parameters<typeof mount>[0]['record'], fx = fakeFix(), p = fakePlayer()) => {
@@ -314,20 +443,36 @@ describe('mount: Fix this step', () => {
     }
   });
 
-  it('only a step that can’t find its element is offered (not a wait or until that timed out)', async () => {
+  it('a step that can’t find its element, and a wait whose text never showed, are offered (not a wait-for-element timeout)', async () => {
     const { g, fx, p } = go({ allowed: () => true });
     await g.play('inline');
     stall(p, 1, 'wait-timeout');
-    stall(p, 1, 'until-timeout');
     await tick();
     expect(fx.made).toHaveLength(0);
     stall(p, 1, 'not-found');
     await tick();
     expect(fx.made).toHaveLength(1);
+    expect(fx.made[0].o.reason).toBe('not-found');
     // A second stall while the offer is open doesn't stack another card.
     stall(p, 1, 'not-found');
     await tick();
     expect(fx.made).toHaveLength(1);
+  });
+
+  it('an until-timeout passes its reason and the texts seen while waiting; a fix past the end ends the guide', async () => {
+    const { g, fx, p } = go({ allowed: () => true });
+    const ends = vi.fn();
+    g.on('end', ends);
+    await g.play('inline');
+    p.made[0].ctl.emit('stalled', { index: 1, step: INLINE.steps[1], reason: 'until-timeout', seen: [{ text: 'Changes saved', element: document.body }] } as unknown as TraceEvents['stalled']);
+    await tick();
+    expect(fx.made[0].o).toMatchObject({ reason: 'until-timeout', seen: [{ text: 'Changes saved' }], index: 1 });
+    fx.made[0].state = 'fixed';
+    fx.made[0].o.onFixed(INLINE, 2);          // the wait was the last step, and it is met now
+    await tick();
+    expect(p.made).toHaveLength(1);           // nothing left to play
+    expect(p.made[0].ctl.destroyed).toBe(true);
+    expect(ends).toHaveBeenCalledOnce();
   });
 
   it('the author gets the guide as authored, the step, the entry, ai and save', async () => {

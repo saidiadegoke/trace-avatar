@@ -1,6 +1,6 @@
 /**
  * trace-avatar/fix: "Fix this step" for an author, where a guide stalls in the app. Loaded only when an author
- * (record.allowed()) meets a step that can't find its element.
+ * (record.allowed()) meets a step that can't find its element, or a wait whose text never showed (E8).
  *
  * Offer → a guess ("Is it this?") or pointing at the element → the element re-recorded (buildTarget) and checked
  * with the player's own resolver → the guide carries on from that step → save the fixed guide, or keep it for
@@ -10,8 +10,9 @@
 import type { Guide } from '../core/manifest';
 import type { Trace } from '../core/format';
 import type { Ai } from '../core/assist';
-import { chooseRepair, targetLabel } from '../core/repair';
-import { candidatesOf, elementOf, resolvesTo } from '../repair/index';
+import { GUESS_MIN, chooseRepair, chooseWait, guessWait, removeStep, targetLabel, typedOf } from '../core/repair';
+import { candidatesOf, elementOf, resolvesTo, scopeFor, textsOf, untilHolds } from '../repair/index';
+import type { SeenText } from '../shell/ports';
 import { buildTarget, meaningful } from '../shell/selector.dom';
 
 export interface FixOptions {
@@ -20,13 +21,17 @@ export interface FixOptions {
   trace: Trace;
   /** The stalled step (from 0). */
   index: number;
+  /** Why it stalled: its element can't be found (default), or a wait's text never showed. */
+  reason?: 'not-found' | 'until-timeout';
+  /** until-timeout: the texts that showed while it waited (the stalled event's `seen`). */
+  seen?: ReadonlyArray<string | SeenText>;
   /** The guide's manifest entry, passed to save. */
   entry: Guide;
   /** Asked only when no candidate is a clear winner. */
   ai?: Ai;
   /** Where a fixed guide goes. Without it, the fixed trace is downloaded. */
   save?: (trace: Trace, entry: Guide) => void | Promise<void>;
-  /** The step is fixed: carry on from it with this trace. */
+  /** The step is fixed: carry on from `index` with this trace (past the end: the guide is done). */
   onFixed(trace: Trace, index: number): void;
   /** The author chose Stop. */
   onStop(): void;
@@ -38,7 +43,7 @@ export interface Fix {
 }
 
 /** A guess this good is shown ("Is it this?"); a person confirms it, so it needn't be a clear winner. */
-export const GUESS_MIN = 0.5;
+export { GUESS_MIN };
 
 const CSS = `
 :host { all: initial; }
@@ -108,12 +113,73 @@ export function offerFix(o: FixOptions): Fix {
     (card.querySelector('button.main') as HTMLButtonElement | null)?.focus();
   };
 
+  // A wait whose text never showed (E8): fix the text it waits for, or remove the wait.
+  const wait = o.reason === 'until-timeout';
+  const gone = !!step?.until?.gone;
+  const quote = (t: string) => `“${t}”`;
+  const remove: [string, () => void] | null = wait && trace.steps.length > 1 ? ['Remove this wait', () => removeWait()] : null;
+
   const offer = () => {
     state = 'offer';
     stopPointing();
     outline(null);
-    show(`Step ${n} can’t find ${targetLabel(step?.target)}.`, [['Fix this step', () => void look(), true], ['Stop', () => { close(); o.onStop(); }]]);
+    const stop: [string, () => void] = ['Stop', () => { close(); o.onStop(); }];
+    if (!wait) show(`Step ${n} can’t find ${targetLabel(step?.target)}.`, [['Fix this step', () => void look(), true], stop]);
+    else if (gone) show(`Step ${n} waited for ${targetLabel(step?.target)} to go, and it never did.`, [...(remove ? [remove] : []), stop]);
+    else show(`Step ${n} waited for ${quote(step?.until?.text ?? '')}, which never showed.`, [['Fix this step', () => void lookText(), true], ...(remove ? [remove] : []), stop]);
   };
+
+  /** The element a wait looks in: its target, or the page. */
+  const scopeOf = (): ParentNode => scopeFor(step?.target, doc);
+
+  async function lookText() {
+    state = 'looking';
+    show('Looking at the page…', []);
+    const list = textsOf(scopeOf(), { seen: o.seen ?? [], typed: typedOf(trace) });
+    let best: { id: number; text: string } | null = null;
+    try {
+      best = guessWait(await chooseWait(trace, o.index, list, o.ai ? { ai: o.ai } : {}), list);
+    } catch { /* the AI failed: point instead */ }
+    if (state !== 'looking') return;
+    if (!best) { point(); return; }
+    const el = elementOf(best.id);
+    const text = best.text;
+    state = 'guess';
+    outline(el);
+    el?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    show(`Is it ${quote(text)}?${el ? '' : ' (seen while waiting)'}`, [['Yes', () => setText(text), true], ['No, I’ll point at it', () => point()], ['Cancel', () => offer()]]);
+  }
+
+  /** Wait for `text` from now on: it must be on the page now (where the wait looks) or have shown while it waited. */
+  function setText(text: string) {
+    const typed = typedOf(trace);
+    const ok = text.length >= 2 && text.length <= 60 && !typed.some((v) => text.toLowerCase().includes(v))
+      && (untilHolds(text, step?.target, doc) || (o.seen ?? []).some((s) => (typeof s === 'string' ? s : s.text).toLowerCase().includes(text.toLowerCase())));
+    if (!ok) {
+      if (state !== 'point') point();
+      show('This step can’t wait for that. Point at a short text where the step waits. Esc to cancel.', [['Cancel', () => offer()]]);
+      return;
+    }
+    stopPointing();
+    outline(null);
+    const next: Trace = JSON.parse(JSON.stringify(trace));
+    next.steps[o.index] = { ...next.steps[o.index], until: { text } };
+    done(next, o.index + 1, `Fixed step ${n}: it waits for ${quote(text)}.`);
+  }
+
+  function removeWait() {
+    done(removeStep(trace, o.index), o.index, `Removed step ${n} (the wait).`);
+  }
+
+  /** The guide is fixed: carry on from `from`, and offer to save. */
+  function done(next: Trace, from: number, msg: string) {
+    stopPointing();
+    outline(null);
+    trace = next;
+    state = 'fixed';
+    o.onFixed(next, from);
+    show(msg, [['Save the guide', () => void save(), true], ['Just this time', () => close()]]);
+  }
 
   async function look() {
     state = 'looking';
@@ -139,7 +205,7 @@ export function offerFix(o: FixOptions): Fix {
   const under = (e: Event): Element | null => {
     const t = e.target as Element | null;
     if (!t || ours(e) || typeof t.closest !== 'function' || t.closest('[data-trace-avatar], [data-trace-ignore]')) return null;
-    return meaningful(t);
+    return wait ? t : meaningful(t);
   };
   const block = (e: Event) => { if (!ours(e)) { e.preventDefault(); e.stopImmediatePropagation(); } };
   const onMove = (e: Event) => { const el = under(e); if (el) outline(el); };
@@ -147,7 +213,7 @@ export function offerFix(o: FixOptions): Fix {
     if (ours(e)) return;
     block(e);
     const el = under(e);
-    if (el) pick(el);
+    if (el) { if (wait) setText((el.textContent ?? '').replace(/\s+/g, ' ').trim()); else pick(el); }
   };
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); offer(); } };
   const PRESS = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'touchstart', 'touchend', 'auxclick', 'dblclick'] as const;
@@ -155,7 +221,7 @@ export function offerFix(o: FixOptions): Fix {
   function point() {
     state = 'point';
     outline(null);
-    show('Click the element this step should use. Esc to cancel.', [['Cancel', () => offer()]]);
+    show(wait ? 'Click the text this step should wait for. Esc to cancel.' : 'Click the element this step should use. Esc to cancel.', [['Cancel', () => offer()]]);
     if (pointing) return;
     pointing = true;
     doc.addEventListener('mouseover', onMove, true);
@@ -179,14 +245,9 @@ export function offerFix(o: FixOptions): Fix {
       show('That can’t be told apart from other things here. Point at something more specific. Esc to cancel.', [['Cancel', () => offer()]]);
       return;
     }
-    stopPointing();
-    outline(null);
     const next: Trace = JSON.parse(JSON.stringify(trace));
     next.steps[o.index] = { ...next.steps[o.index], target };
-    trace = next;
-    state = 'fixed';
-    o.onFixed(next, o.index);
-    show(`Fixed step ${n}: ${targetLabel(target)}.`, [['Save the guide', () => void save(), true], ['Just this time', () => close()]]);
+    done(next, o.index, `Fixed step ${n}: ${targetLabel(target)}.`);
   }
 
   async function save() {
@@ -199,13 +260,13 @@ export function offerFix(o: FixOptions): Fix {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      show(`Downloaded ${o.entry.id}.trace.json with step ${n} fixed.`, [['Close', () => close(), true]]);
+      show(`Downloaded ${o.entry.id}.trace.json, fixed.`, [['Close', () => close(), true]]);
       return;
     }
     show('Saving…', []);
     try {
       await o.save(trace, o.entry);
-      show(`Saved: step ${n} is fixed for everyone.`, [['Close', () => close(), true]]);
+      show('Saved: the guide is fixed for everyone.', [['Close', () => close(), true]]);
     } catch (e) {
       show(`Could not save: ${(e as Error)?.message ?? e}`, [['Try again', () => void save(), true], ['Close', () => close()]]);
     }

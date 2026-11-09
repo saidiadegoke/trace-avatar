@@ -13,6 +13,9 @@ export interface ClockPort {
   caf(id: number): void;
 }
 
+/** A short text the page showed while a wait waited, and where. */
+export interface SeenText { text: string; element: Element }
+
 export interface PagePort {
   /** A per-frame, memoised query of where each step's element is. */
   looker(trace: NormalisedTrace, vp: Viewport): LookFn;
@@ -24,6 +27,8 @@ export interface PagePort {
    * page has changed. Optional: without it, every `until` counts as met.
    */
   until?(trace: NormalisedTrace, now: number): (i: number) => boolean;
+  /** Short texts that appeared or changed around the current `until` wait, newest first (at most 20). */
+  seen?(): SeenText[];
   clear(): void;
 }
 

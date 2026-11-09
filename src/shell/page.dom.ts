@@ -10,7 +10,7 @@
 
 import type { NStep, NormalisedTrace, Target } from '../core/format';
 import type { Look, LookFn, ResolvedBy, Viewport } from '../core/player';
-import type { Locator, PagePort } from './ports';
+import type { Locator, PagePort, SeenText } from './ports';
 
 const norm = (s: string | null | undefined) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -137,10 +137,28 @@ export function createPage(opts: PageOptions = {}): PagePort {
   /** Bumped by every page change the observer sees; each answer remembers the version it saw. */
   let version = 0;
   let observer: MutationObserver | null = null;
+  /**
+   * Short texts the page showed, with when, while a guide with `until` waits plays (the app's answer often
+   * shows before the wait starts asking). Visibility is checked when read, never here: no layout in the observer.
+   */
+  let log: Array<{ element: Element; text: string; at: number }> = [];
+  let noting = false;
+  let waitingFor = -1;
+  let waitStart = 0;
+  const note = (records: MutationRecord[]) => {
+    for (const r of records.slice(0, 50)) {
+      for (const n of r.type === 'childList' ? Array.from(r.addedNodes).slice(0, 10) : [r.target]) {
+        const el = n.nodeType === 1 ? (n as Element) : n.parentElement;
+        if (!el || el.childElementCount > 10 || el.closest('[data-trace-avatar]')) continue;
+        const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (text.length >= 2 && text.length <= 60) log = [{ element: el, text, at: Date.now() }, ...log].slice(0, 30);
+      }
+    }
+  };
   const watch = () => {
     const MO = (win as Window & typeof globalThis).MutationObserver;
     if (observer || typeof MO !== 'function') return;
-    const mo = new MO(() => { version += 1; });
+    const mo = new MO((records) => { version += 1; if (noting) note(records); });
     mo.observe(root as Node, { subtree: true, childList: true, characterData: true, attributes: true });
     observer = mo;
   };
@@ -178,9 +196,11 @@ export function createPage(opts: PageOptions = {}): PagePort {
     element: (i) => cache.get(i)?.ref.deref() ?? null,
     until(trace, now) {
       watch();
+      noting = trace.steps.some((s) => s.until);
       return (i) => {
         const step = trace.steps[i];
         if (!step?.until) return true;
+        if (waitingFor !== i) { waitingFor = i; waitStart = Date.now(); }
         const memo = untilMemo.get(i);
         // Recheck when first asked, or when UNTIL_MS has passed and the page changed (or can't be watched).
         if (memo && !(now - memo.at >= UNTIL_MS && (memo.seen !== version || !observer))) return memo.met;
@@ -189,7 +209,17 @@ export function createPage(opts: PageOptions = {}): PagePort {
         return met;
       };
     },
-    clear: () => { cache.clear(); untilMemo.clear(); observer?.disconnect(); observer = null; },
+    // From 2 s before the wait began, newest first: still shown, or come and gone (a toast).
+    seen: () => {
+      const out: SeenText[] = [];
+      for (const { element: el, text, at } of log) {
+        if (waitingFor < 0 || at < waitStart - 2000 || out.length >= 20 || out.some((o) => o.text === text)) continue;
+        // Gone, or changed since (it came and went), or still shown. Text that was never visible doesn't count.
+        if (!el.isConnected || norm(el.textContent) !== norm(text) || isUsable(el)) out.push({ text, element: el });
+      }
+      return out;
+    },
+    clear: () => { cache.clear(); untilMemo.clear(); observer?.disconnect(); observer = null; log = []; waitingFor = -1; },
     looker(trace: NormalisedTrace, vp: Viewport): LookFn {
       const memo = new Map<number, Look | null>();
       const rec = trace.meta.viewport;

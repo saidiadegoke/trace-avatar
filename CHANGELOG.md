@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- **Fix a wait whose text changed:** a guide that stalls with `until-timeout` (it waited for "Saved"; the app now says
+  "Changes stored") gets the Fix this step card too: "Is it “Changes stored”?" (code scores first, `record.ai` only
+  when unsure, task `'repair-wait'`), point at the text, or **Remove this wait**. A wait for something to go offers
+  Remove and Stop only. A one-step guide is never offered Remove.
+- The `stalled` event carries `seen` (`{ text, element }[]`) on `until-timeout`: short texts that showed from 2 s
+  before the wait until it gave up, newest first, including a message that came and went. The page notes them only
+  in guides that have an `until` step.
+- `trace-avatar/repair`: `textsOf` (short texts where a wait looks, plus `seen`; never fields, controls, masked,
+  ignored or blurred areas, or text holding a typed value), `untilHolds` (the player's own check) and `scopeFor`.
+- `trace-avatar/assist`: `scoreTexts`, `chooseWait`, `guessWait` (with `GUESS_MIN`), `waitPayload`, `toWaitChoice`,
+  `waitSuggestion` (`kind: 'until'`, taken by `apply`), `removeStep` and `typedOf`.
+- Fix this step's saved messages: "Saved: the guide is fixed for everyone." / "Downloaded <id>.trace.json, fixed."
+- Budgets, raised for the seen-text log in the player (about 0.25 KB): core and React 14 → 14.25 KB, CDN build
+  14.25 → 14.5 KB, perform 15.5 → 15.75 KB; Fix this step 7 → 8.25 KB (the wait card, 8.1 KB).
+
 ## 0.1.8 (9 Nov 2026)
 
 - **Fix this step:** with `mount({ record })`, an author whose guide stalls on a step that can't find its element gets

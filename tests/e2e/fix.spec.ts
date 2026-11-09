@@ -28,7 +28,7 @@ test('an author is offered a fix; Yes on the guess fixes the step, the guide fin
   await expect(bubble(page)).toHaveText('All done.', { timeout: 15_000 });
   expect((await clicks(page)).store).toBe(0); // Show me never clicks
   await card(page).getByRole('button', { name: 'Save the guide' }).click();
-  await expect(msg(page)).toHaveText('Saved: step 2 is fixed for everyone.');
+  await expect(msg(page)).toHaveText('Saved: the guide is fixed for everyone.');
   const saved = await page.evaluate(() => (window as any).saved);
   expect(saved).toHaveLength(1);
   expect(saved[0].entry).toMatchObject({ id: 'invoice', title: 'Make an invoice' });
@@ -81,7 +81,7 @@ test('without save, the fixed guide is downloaded', async ({ page }) => {
   await card(page).getByRole('button', { name: 'Yes' }).click();
   const [dl] = await Promise.all([page.waitForEvent('download'), card(page).getByRole('button', { name: 'Save the guide' }).click()]);
   expect(dl.suggestedFilename()).toBe('invoice.trace.json');
-  await expect(msg(page)).toHaveText('Downloaded invoice.trace.json with step 2 fixed.');
+  await expect(msg(page)).toHaveText('Downloaded invoice.trace.json, fixed.');
 });
 
 test('Stop on the card stops the guide', async ({ page }) => {

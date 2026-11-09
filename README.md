@@ -475,6 +475,22 @@ masked field is offered by its label (a step may well mean the password box), ne
 contains a value typed in the guide. trace-avatar-render's `--repair` does all of this when a render stalls, and plays
 the guide again to verify the fix.
 
+**A wait whose text changed.** A guide recorded when the app said "Saved" stalls (`reason: 'until-timeout'`) once
+the app says "Changes stored". `textsOf` lists the short texts (2 to 60 characters) where the wait looks (its
+element, or the page), plus the texts that showed *while it waited*, which the stalled event carries as `seen`:
+a message that came and went is still offered, marked `recent` and `gone`. Fields, buttons, links and other
+controls, masked, ignored and blurred areas, and any text holding a value typed in the guide are never offered.
+`chooseWait` scores them (texts that just showed count a little more) and asks an AI only when unsure; an AI's
+answer must be one of the texts sent, or a part of one. `guessWait` is what to offer when nothing is sure.
+
+```js
+import { textsOf, scopeFor } from 'trace-avatar/repair';
+import { chooseWait, guessWait, waitSuggestion, apply } from 'trace-avatar/assist';
+const texts = textsOf(scopeFor(step.target), { seen: stalled.seen });     // [{ id, text, recent?, gone? }]
+const best = guessWait(await chooseWait(trace, i, texts, { ai }), texts); // { id, text, guess } | null
+if (best) next = apply(trace, [waitSuggestion(trace, i, best.text)]);      // until: { text: best.text }
+```
+
 ### Fix this step, in the app
 
 With `mount({ record: { allowed, save } })`, an author who meets a guide that can't find its element gets a card
@@ -488,7 +504,13 @@ where it stalled: **"Step 2 can't find button “Save invoice”." Fix this step
   fixed trace and its manifest entry to `record.save` (or downloads `<id>.trace.json`), or **Just this time** keeps
   the fix for this session only.
 
-People who may not record see nothing new, and the fix code (`trace-avatar/fix`, CDN `trace-fix.min.js`, about 7 KB)
+A wait whose text never showed gets the same card: **"Step 3 waited for “Saved”, which never showed." Fix this
+step · Remove this wait · Stop**. Fix this step asks **"Is it “Changes stored”?"** (adding "(seen while waiting)"
+for a message that has gone), and pointing picks the text to wait for. Remove this wait drops the step, for an app
+that no longer needs one; its caption moves on to the next step when that has none. A wait for something to go away
+offers Remove and Stop only.
+
+People who may not record see nothing new, and the fix code (`trace-avatar/fix`, CDN `trace-fix.min.js`, about 8 KB)
 is loaded only when an author meets a stalled step.
 
 ## Theming
