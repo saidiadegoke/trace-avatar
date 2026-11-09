@@ -7,6 +7,7 @@
  */
 
 import type { Target, Trace } from './format';
+import type { Ai, Suggestion } from './assist';
 
 /** Something on the page a step could act on. `key` (an id or test id) is used for scoring, never sent. */
 export interface Candidate {
@@ -133,3 +134,40 @@ export function toRepairChoice(answer: unknown, sent: readonly number[]): { id: 
   const id = typeof a.id === 'number' && sent.includes(a.id) ? a.id : null;
   return { id, ...(why ? { why } : {}) };
 }
+
+export interface RepairChoice {
+  /** The chosen candidate, or null (a person picks from `top`). */
+  id: number | null;
+  /** 'score': code settled it (no AI call); 'ai': the AI chose; 'none': unsure and no AI. */
+  by: 'score' | 'ai' | 'none';
+  score?: number;
+  why?: string;
+  /** The three best by score. */
+  top: Scored[];
+}
+
+/**
+ * Which candidate a stalled step means: code scores them first, and an AI is asked only when no candidate
+ * is a clear winner. `image` (a screenshot of the page) is sent only when given.
+ */
+export async function chooseRepair(trace: Trace, index: number, candidates: readonly Candidate[], o: { ai?: Ai; image?: { png: Uint8Array; label: string } } = {}): Promise<RepairChoice> {
+  const step = trace.steps[index];
+  const scored = scoreCandidates(step?.target, candidates, step?.say);
+  const top = scored.slice(0, 3);
+  const win = clearWinner(scored);
+  if (win) return { id: win.id, by: 'score', score: win.score, top };
+  if (!o.ai) return { id: null, by: 'none', top };
+  const p = repairPayload(trace, index, candidates);
+  if (!p.sent.length) return { id: null, by: 'none', top };
+  const c = toRepairChoice(await o.ai('repair', p.input, p.schema, { instructions: p.instructions, ...(o.image ? { images: [o.image] } : {}) }), p.sent);
+  return { id: c.id, by: c.id === null ? 'none' : 'ai', ...(c.id !== null ? { score: scored.find((x) => x.id === c.id)?.score ?? 0 } : {}), ...(c.why ? { why: c.why } : {}), top };
+}
+
+/** A repair as a suggestion that apply() takes: the step's new target. */
+export function repairSuggestion(trace: Trace, index: number, target: Target, o: { why?: string; verified?: boolean } = {}): Suggestion {
+  return {
+    task: 'repair', kind: 'target', index, value: label(target), before: label(trace.steps[index]?.target), target,
+    ...(o.why ? { why: o.why } : {}), ...(o.verified !== undefined ? { verified: o.verified } : {}),
+  };
+}
+

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Fix this step:** with `mount({ record })`, an author whose guide stalls on a step that can't find its element gets
+  a card there: Fix this step (a guess, "Is it this?", from `chooseRepair`; `record.ai` only when unsure) or point at
+  the element (the click never reaches the app; Esc goes back). The pick is re-recorded (buildTarget) and refused
+  unless the player's own resolver finds exactly it. The guide carries on from that step with the fixed trace; Save
+  the guide calls `record.save(trace, entry)` (or downloads `<id>.trace.json`), Just this time keeps it for the
+  session. `trace-avatar/fix` (`offerFix`), CDN `trace-fix.min.js` (global `TraceAvatarFix`), loaded only then.
+- `createTrace({ startAt })` starts from that step.
+- `chooseRepair`, `repairSuggestion` and the scoring now live in the core (still exported from `trace-avatar/assist`).
+- Repair offers masked fields (by their label, never their value): a step may mean the password box. Ignored and
+  blurred areas are still never offered.
+- Budgets: CDN loader 6.5 → 7 KB (the fix loader and the stalled hook); Fix this step 7 KB (6.63 KB).
+
 ## 0.1.7 (9 Nov 2026)
 
 - README GIFs of Show me and Do it for me (`media/`), rendered with the new trace-avatar-render.

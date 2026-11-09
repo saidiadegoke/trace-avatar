@@ -76,6 +76,20 @@ describe('cdnLoaders', () => {
     await expect(p).resolves.toHaveProperty('createPerformer');
     expect(BASE).toBe(''); // no script tag in tests
   });
+
+  it('loads trace-fix.min.js (global TraceAvatarFix) from the same folder, only when asked', async () => {
+    const f = fakeDoc();
+    const l = cdnLoaders('https://cdn.example/dist/', f.doc);
+    expect(f.added).toHaveLength(0);
+    const p = l.fix!();
+    const s = f.finish(() => { f.win.TraceAvatarFix = { offerFix() {} }; });
+    expect(s.src).toBe('https://cdn.example/dist/trace-fix.min.js');
+    await expect(p).resolves.toHaveProperty('offerFix');
+    const bad = fakeDoc();
+    const q = cdnLoaders('https://cdn.example/dist/', bad.doc).fix!();
+    bad.finish(() => { bad.win.TraceAvatarFix = {}; });
+    await expect(q).rejects.toThrow();
+  });
 });
 
 describe('fromScript / mount', () => {

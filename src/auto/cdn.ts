@@ -10,7 +10,7 @@
  */
 
 import { mount as mountWith } from './mount';
-import type { GuidesController, Loaders, MountOptions, PlayerModule, StudioModule } from './mount';
+import type { FixModule, GuidesController, Loaders, MountOptions, PlayerModule, StudioModule } from './mount';
 import type { LauncherPosition } from '../shell/launcher.dom';
 import { baseOf, hasPerformer, loadGlobal } from '../shell/load-global';
 
@@ -33,6 +33,7 @@ export function launcherOf(v: string | null | undefined): LauncherPosition | fal
 export const cdnLoaders = (base: string = BASE, doc?: Document): Loaders => ({
   player: () => loadGlobal<PlayerModule>(`${base}trace-perform.min.js`, 'TraceAvatar', hasPerformer, doc),
   studio: () => loadGlobal<StudioModule>(`${base}trace-studio.min.js`, 'TraceAvatarStudio', (g) => typeof (g as Partial<StudioModule> | undefined)?.createStudio === 'function', doc),
+  fix: () => loadGlobal<FixModule>(`${base}trace-fix.min.js`, 'TraceAvatarFix', (g) => typeof (g as Partial<FixModule> | undefined)?.offerFix === 'function', doc),
 });
 
 export function mount(opts: MountOptions, loaders: Partial<Loaders> = {}): GuidesController {

@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Fix app</title></head>
+<body style="font:15px system-ui;padding:120px 40px 40px">
+  <!-- The app changed after the guide was recorded: "Save invoice" is now "Store invoice". -->
+  <h1>Invoices</h1>
+  <button id="new">New invoice</button>
+  <p><input id="pw" type="password" aria-label="Password" value="hunter22" data-trace-mask></p>
+  <button id="store">Store invoice</button>
+  <button id="archive">Archive</button>
+  <div id="status"></div>
+  <script>
+    window.clicks = { store: 0, archive: 0, new: 0 };
+    for (const id of ['new', 'store', 'archive']) document.getElementById(id).addEventListener('click', () => {
+      window.clicks[id] += 1;
+      document.getElementById('status').textContent = id;
+    });
+  </script>
+  <script src="/dist/trace-auto.min.js"></script>
+  <script src="/tests/e2e/fixtures/fix/setup.js"></script>
+</body></html>

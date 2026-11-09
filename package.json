@@ -94,6 +94,11 @@
       "import": "./dist/assist.js",
       "require": "./dist/assist.cjs"
     },
+    "./fix": {
+      "types": "./dist/fix.d.ts",
+      "import": "./dist/fix.js",
+      "require": "./dist/fix.cjs"
+    },
     "./repair": {
       "types": "./dist/repair.d.ts",
       "import": "./dist/repair.js",
@@ -149,7 +154,8 @@
       "ignore": [
         "react",
         "./perform.js",
-        "./studio.js"
+        "./studio.js",
+        "./fix.js"
       ],
       "limit": "6.5 KB"
     },
@@ -171,7 +177,7 @@
     {
       "name": "loader (CDN bootstrap)",
       "path": "dist/trace-auto.min.js",
-      "limit": "6.5 KB"
+      "limit": "7 KB"
     },
     {
       "name": "loader (npm, before the first play)",
@@ -180,7 +186,8 @@
       "limit": "6.5 KB",
       "ignore": [
         "./perform.js",
-        "./studio.js"
+        "./studio.js",
+        "./fix.js"
       ]
     },
     {
@@ -223,6 +230,11 @@
       "path": "dist/assist.js",
       "import": "{ suggest, apply, openAiCompatible, gemini, gateway }",
       "limit": "6 KB"
+    },
+    {
+      "name": "Fix this step (trace-fix.min.js, loaded when an author meets a stalled step)",
+      "path": "dist/trace-fix.min.js",
+      "limit": "7 KB"
     },
     {
       "name": "repair (candidates on a page, re-recording one as a target; reuses the recorder's buildTarget and the player's locators)",

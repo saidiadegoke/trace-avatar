@@ -13,17 +13,17 @@ type R = {
 
 test.beforeEach(async ({ page }) => { await page.goto('/tests/e2e/fixtures/repair.html'); });
 
-test('candidates: visible things to act on, named, with where they are; no values, nothing masked, blurred, ignored or hidden', async ({ page }) => {
+test('candidates: visible things to act on, named, with where they are; no values; nothing blurred, ignored or hidden; masked areas offered', async ({ page }) => {
   const list = await page.evaluate(() => (window as unknown as { TraceAvatarRepair: R }).TraceAvatarRepair.candidatesOf(document, { skip: '.dev' }));
   const names = list.map((c) => `${c.role ?? '-'}:${c.name}`);
   expect(names).toEqual([
     'link:Invoices', 'link:Customers',
     'textbox:Customer', 'textbox:Notes', 'textbox:Memo',
     'button:💾 Save invoice', 'button:Save draft', 'button:Preview',
-    'button:Delete',
+    'textbox:Password', 'button:Masked action', 'button:Delete',
   ]);
   const json = JSON.stringify(list);
-  for (const secret of ['Grace Hopper', 'a private note', 'typed memo', 'Masked action', 'Blurred action', 'Ignored action', 'Hidden save', 'Dev toolbar']) expect(json).not.toContain(secret);
+  for (const secret of ['hunter22', 'Grace Hopper', 'a private note', 'typed memo', 'Blurred action', 'Ignored action', 'Hidden save', 'Dev toolbar']) expect(json).not.toContain(secret);
   expect(list.find((c) => c.name === 'Invoices')).toMatchObject({ near: 'Menu' });
   expect(list.find((c) => c.name.includes('Save invoice'))).toMatchObject({ near: 'New invoice', key: 'save' });
   expect(list.find((c) => c.name === 'Save draft')).not.toHaveProperty('key');   // a generated id is no key

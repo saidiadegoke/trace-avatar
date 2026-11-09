@@ -20,15 +20,20 @@ import type { CaptionMode } from '../shell/renderer.shadow';
 import { matchShortcut } from '../core/shortcut';
 import { studioWaiting } from '../core/studio-keys';
 import type { Studio, StudioOptions } from '../studio/studio.dom';
+import type { Fix, FixOptions } from '../fix/index';
+import type { Trace } from '../core/format';
 
 export interface PlayerModule { createTrace(o: TraceOptions): TraceController }
 export interface StudioModule { createStudio(o: StudioOptions): Studio }
+export interface FixModule { offerFix(o: FixOptions): Fix }
 
 export interface Loaders {
   /** The player that plays both modes (trace-avatar/perform). */
   player(): Promise<PlayerModule>;
   /** The studio (trace-avatar/studio), loaded only for an author who may record. */
   studio?: () => Promise<StudioModule>;
+  /** "Fix this step" (trace-avatar/fix), loaded only when an author meets a step that can't find its element. */
+  fix?: () => Promise<FixModule>;
 }
 
 export interface RecordOptions {
@@ -87,7 +92,11 @@ export interface GuidesEvents extends Record<string, unknown> {
   error: Error;
 }
 
-export interface PlayOptions { mode?: GuideMode }
+export interface PlayOptions {
+  mode?: GuideMode;
+  /** Play from this step (index from 0). */
+  startAt?: number;
+}
 
 export interface GuidesController {
   /** Resolves when the manifest is loaded (rejects when it can't be). */
@@ -185,13 +194,18 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     ...(linksOn ? { onCopy: copy } : {}),
   }) : null;
 
-  const traceOf = (g: NGuide) => (typeof g.trace === 'string' ? new URL(g.trace, base).href : g.trace);
+  /** Guides an author fixed in this session (until the page is left). */
+  const fixedTraces = new Map<string, Trace>();
+  let fix: Fix | null = null;
+  const traceOf = (g: NGuide) => fixedTraces.get(g.id) ?? (typeof g.trace === 'string' ? new URL(g.trace, base).href : g.trace);
   const loadPlayer = () => (player ??= loaders.player().catch((e) => { player = null; throw e; }));
 
   function clearCurrent(kind: 'end' | 'stop' | null) {
     if (endTimer) { clearTimeout(endTimer); endTimer = null; }
     const c = current;
     current = null;
+    // A fix waiting to be saved outlives the guide; an unanswered offer goes with it.
+    if (fix && fix.state !== 'fixed') { fix.close(); fix = null; }
     store.clear();
     launcher?.setPlaying(false);
     if (!c) return;
@@ -213,7 +227,8 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     let mod: PlayerModule;
     try { mod = await loadPlayer(); } catch (e) { fail(`could not load the player: ${(e as Error).message}`, id); return null; }
     if (destroyed) return null;
-    clearCurrent(current ? 'stop' : null);
+    // Carrying on after a fix replaces the guide quietly (no stop event).
+    clearCurrent(current && o.startAt === undefined ? 'stop' : null);
     let c: TraceController;
     try {
       c = mod.createTrace({
@@ -222,6 +237,7 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
         controls: opts.controls ?? true,
         autoplay: !resuming,
         resumeKey: `auto:${g.id}`,
+        ...(o.startAt !== undefined ? { startAt: o.startAt } : {}),
         ...(opts.captions ? { captions: opts.captions } : {}),
         ...(opts.rate ? { rate: opts.rate } : {}),
         ...(opts.avatar ? { avatar: opts.avatar } : {}),
@@ -236,6 +252,7 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     store.set(g.id, mode);
     launcher?.setPlaying(true);
     c.on('error', (e) => { report(new GuideError(e.message, g.id)); });
+    c.on('stalled', (d) => { if (d.reason === 'not-found' && current === entry) void offerFix(entry, g, d.index); });
     c.on('end', () => {
       if (current !== entry) return;
       store.clear();
@@ -255,6 +272,31 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
   }
 
   function stop() { clearCurrent('stop'); }
+
+  /** An author meets a step that can't find its element: offer to fix it there. Others see nothing new. */
+  async function offerFix(entry: GuideEvent & { controller: TraceController }, g: NGuide, index: number) {
+    if ((fix && fix.state !== 'fixed' && fix.state !== 'closed') || !rec || !loaders.fix) return;
+    try { if (!(await rec.allowed())) return; } catch { return; }
+    if (current !== entry || destroyed) return;
+    let mod: FixModule;
+    let raw: Trace;
+    try {
+      mod = await loaders.fix();
+      raw = fixedTraces.get(g.id) ?? (typeof g.trace === 'string' ? await (await fetch(new URL(g.trace, base).href)).json() : g.trace);
+    } catch (e) { fail(`could not offer a fix: ${(e as Error).message}`, g.id); return; }
+    if (current !== entry || destroyed || (fix && fix.state !== 'fixed' && fix.state !== 'closed')) return;
+    fix?.close();
+    fix = mod.offerFix({
+      doc, trace: raw, index, ai: rec.ai,
+      entry: { id: g.id, title: g.title, trace: g.trace, ...(g.modes?.length ? { modes: [...g.modes] } : {}), ...(g.pages?.length ? { pages: [...g.pages] } : {}), ...(g.tags?.length ? { tags: [...g.tags] } : {}) },
+      ...(rec.save ? { save: rec.save } : {}),
+      onFixed: (t, i) => {
+        fixedTraces.set(g.id, t);
+        void play(g.id, { mode: entry.mode, startAt: i });   // the card stays, to save
+      },
+      onStop: () => { fix = null; stop(); },
+    });
+  }
 
   const onClick = (e: Event) => {
     const t = e.target as Element | null;

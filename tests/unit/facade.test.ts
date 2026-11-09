@@ -537,6 +537,28 @@ describe('perform mode, prepare, reset, resume, until (0.1.2)', () => {
     expect(sessionStorage.getItem('trace-avatar:tour')).toBeNull();
   });
 
+  it('startAt plays from that step (a fixed guide carrying on); 0, out of range or fractional is safe', async () => {
+    const t = make({ trace: TRACE, startAt: 1, autoplay: true });
+    await t.ready;
+    expect(t.index).toBe(1);
+    const steps: number[] = [];
+    t.on('step', (e) => steps.push(e.index));
+    clock.run(3000);
+    expect(steps).toEqual([1]);
+    expect(t.state).toBe('ended');
+    t.destroy();
+    for (const startAt of [0, -1, 2, 9]) {
+      const u = make({ trace: TRACE, startAt });
+      await u.ready;
+      expect(u.index).toBe(0);
+      u.destroy();
+    }
+    const f = make({ trace: TRACE, startAt: 1.7 });
+    await f.ready;
+    expect(f.index).toBe(1);
+    f.destroy();
+  });
+
   it('resume is skipped when the save is old, for another trace, the last step, on the wrong page, or unreadable; stop forgets', async () => {
     const put = (v: unknown) => sessionStorage.setItem('trace-avatar:k', typeof v === 'string' ? v : JSON.stringify(v));
     const index = async (o: Partial<TraceOptions> = {}) => { const t = make({ trace: TRACE, resumeKey: 'k', ...o }); await t.ready; const i = t.index; const st = t.state; t.destroy(); return [i, st]; };

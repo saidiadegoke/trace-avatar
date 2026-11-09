@@ -18,8 +18,11 @@ export type { Candidate } from '../core/repair';
 /** Roles a step acts on. Elements without a role (a label, a focusable div) count when they have a name. */
 const ACT_ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'checkbox', 'radio', 'combobox', 'option', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'switch', 'slider', 'spinbutton', 'treeitem', 'gridcell', 'row', 'listitem']);
 const ACTIONABLE = 'button, a[href], input:not([type=hidden]), select, textarea, summary, label, [role], [contenteditable=""], [contenteditable=true], [tabindex]:not([tabindex="-1"]), [onclick]';
-/** Never offered: the overlay, ignored, masked and blurred areas. */
-export const SKIP = '[data-trace-ignore], [data-trace-avatar], [data-trace-mask], [data-trace-blur]';
+/**
+ * Never offered: the overlay, ignored and blurred areas. Masked areas are offered (a step types into a masked
+ * field), but no field's value is ever read.
+ */
+export const SKIP = '[data-trace-ignore], [data-trace-avatar], [data-trace-blur]';
 
 const clean = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
 
@@ -46,7 +49,7 @@ function fieldName(el: Element): string {
 }
 
 /**
- * What a step could act on: visible, usable elements outside ignored, masked and blurred areas (and `skip`),
+ * What a step could act on: visible, usable elements outside ignored and blurred areas (and `skip`),
  * in page order, at most `max`. A field's value is never read.
  */
 export function candidatesOf(root: ParentNode = document, o: { skip?: string; max?: number } = {}): Candidate[] {

@@ -110,6 +110,8 @@ export interface TraceOptions {
    * a guide created with the same key (on the next page, within 10 minutes) resumes from the next step.
    */
   resumeKey?: string;
+  /** Play from this step (index from 0) instead of the start: carrying on after a step was fixed. */
+  startAt?: number;
   /** Extra element locators, tried before the built-in ones. */
   locators?: Locator[];
   /** Replace the browser adapters (tests, embedding). */
@@ -223,6 +225,10 @@ export function createTrace(opts: TraceOptions): TraceController {
       if ((opts.takeover ?? 'pause') === 'pause') dispatch({ kind: 'takeover' });
     }) ?? null;
     resume(trace);
+    if (opts.startAt !== undefined && opts.startAt > 0 && opts.startAt < trace.steps.length) {
+      ran = true;
+      s = update(s, { kind: 'jump', i: Math.floor(opts.startAt) }, trace, cfg)[0];
+    }
     if (opts.autoplay) dispatch({ kind: 'play' });
     for (const m of pending.splice(0)) dispatch(m);
     render();

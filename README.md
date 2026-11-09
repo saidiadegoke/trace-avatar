@@ -469,10 +469,26 @@ const target = targetFor(choice.id);                                   // as if 
 if (resolvesTo(target, elementOf(choice.id))) next = apply(trace, [repairSuggestion(trace, stalledIndex, target)]);
 ```
 
-A field's value is never read. Hidden, `[data-trace-ignore]`, `[data-trace-mask]` and `[data-trace-blur]` areas are
-never offered. The AI gets the step, its neighbours and the best 30 candidates: no ids or test ids, and nothing that
+A field's value is never read. Hidden, `[data-trace-ignore]` and `[data-trace-blur]` areas are never offered; a
+masked field is offered by its label (a step may well mean the password box), never by what is in it. The AI gets the step, its neighbours and the best 30 candidates: no ids or test ids, and nothing that
 contains a value typed in the guide. trace-avatar-render's `--repair` does all of this when a render stalls, and plays
 the guide again to verify the fix.
+
+### Fix this step, in the app
+
+With `mount({ record: { allowed, save } })`, an author who meets a guide that can't find its element gets a card
+where it stalled: **"Step 2 can't find button “Save invoice”." Fix this step · Stop**.
+
+- **Fix this step** looks at the page and shows its best guess with a ring: **"Is it this? (button “Store invoice”)"
+  Yes · No, I'll point at it · Cancel**. `record.ai` is asked only when the scores are unsure.
+- **Pointing**: the next click picks the element and never reaches the app (presses are held back too); Esc goes
+  back. A pick the player couldn't find again on its own is refused ("can't be told apart"), so a fix always works.
+- The guide **carries on from that step** with the fixed trace, in the same mode. Then **Save the guide** hands the
+  fixed trace and its manifest entry to `record.save` (or downloads `<id>.trace.json`), or **Just this time** keeps
+  the fix for this session only.
+
+People who may not record see nothing new, and the fix code (`trace-avatar/fix`, CDN `trace-fix.min.js`, about 7 KB)
+is loaded only when an author meets a stalled step.
 
 ## Theming
 
