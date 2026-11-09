@@ -208,3 +208,13 @@ test('the README guides manifest is valid', async ({ page }) => {
   await page.addScriptTag({ url: '/dist/trace-auto.min.js' });
   expect(await page.evaluate((m) => (window as any).TraceAvatarAuto.validateManifest(JSON.parse(m)).errors, block)).toEqual([]);
 });
+
+test('vanilla example, ?mode=off: no guide starts until a mode is picked', async ({ page }) => {
+  await page.goto('/examples/vanilla-html/?mode=off');
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => (window as any).guide)).toBeUndefined();
+  await expect(page.locator('[data-trace-avatar]')).toHaveCount(0);
+  await page.click('#show');
+  await expect(page.locator('#show')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => page.evaluate(() => (window as any).guide?.state)).toBe('playing');
+});

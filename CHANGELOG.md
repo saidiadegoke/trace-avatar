@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- README GIFs of Show me and Do it for me (`media/`), rendered with the new trace-avatar-render.
+- The vanilla example takes `?mode=off` (no guide starts; for renderers that bring their own player).
+
 ## 0.1.6
 
 The studio: record guides inside the app.

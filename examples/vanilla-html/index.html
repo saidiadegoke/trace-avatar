@@ -56,7 +56,9 @@
     }
     document.getElementById('show').addEventListener('click', () => start('overlay'));
     document.getElementById('do').addEventListener('click', () => start('perform'));
-    start(new URLSearchParams(location.search).get('mode') === 'perform' ? 'perform' : 'overlay');
+    // ?mode=perform opens in Do it for me; ?mode=off starts nothing (for trace-avatar-render, which brings its own player).
+    const asked = new URLSearchParams(location.search).get('mode');
+    if (asked !== 'off') start(asked === 'perform' ? 'perform' : 'overlay');
   </script>
 </body>
 </html>
