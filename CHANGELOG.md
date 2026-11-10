@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.13 (10 Nov 2026)
+
+- **Save as video never hangs.** It used to wait for the shared tab's video to start with no limit, and where the
+  browser never starts it (Playwright's Linux WebKit, where `play()` never settles) the export waited forever. It
+  now waits up to 2 s for a picture, then rejects with `ExportError('failed', 'the shared tab sent no picture')`,
+  and sharing stops.
+- Tests: the export tests that need a playing stream skip on Linux WebKit only (they run on macOS WebKit); the
+  overlay scroll test waits for a smooth wheel scroll to come to rest; unit tests get happy-dom storage on Node 25+,
+  where Node's own `localStorage` / `sessionStorage` took its place.
+
 ## 0.1.12 (10 Nov 2026)
 
 - **Edit a saved guide in the studio:** `studio.edit(trace, entry)` opens the review on a guide that already exists
