@@ -27,6 +27,9 @@ import { createEmitter } from '../shell/emitter';
 import { factsOf } from '../shell/recorder.dom';
 import type { PrepareResult, TraceController, TraceOptions } from '../index';
 
+/** What a save is: `from` is the id of the saved guide the author opened (edit, Fix this step); absent when new. */
+export interface SaveInfo { from?: string }
+
 export interface StudioPlayer { createTrace(o: TraceOptions): TraceController }
 export interface StudioLoaders {
   player(): Promise<StudioPlayer>;
@@ -36,8 +39,11 @@ export interface StudioLoaders {
 
 export interface StudioOptions {
   doc?: Document;
-  /** Where a saved guide goes: your API, a CMS, a pull request. Default: download the .trace.json. */
-  save?: (trace: Trace, entry: Guide) => void | Promise<void>;
+  /**
+   * Where a saved guide goes: your API, a CMS, a pull request. Default: download the .trace.json.
+   * `info.from` is the id of the saved guide this one was opened from (`edit`); absent for a new recording.
+   */
+  save?: (trace: Trace, entry: Guide, info: SaveInfo) => void | Promise<void>;
   /** Copied to meta.requires (e.g. ['signed-in']). */
   requires?: string[];
   /** Mask typed text unless a field is revealed. Default true. */
@@ -78,6 +84,8 @@ export interface Studio {
   start(): void;
   /** Stop recording and open the review. */
   stop(): void;
+  /** Open a saved guide in the review, to change it. Its save carries `{ from: entry.id }`. */
+  edit(trace: Trace, entry: { id: string; title?: string; modes?: GuideMode[]; pages?: string[] }): void;
   on<K extends keyof StudioEvents>(ev: K, fn: (d: StudioEvents[K]) => void): () => void;
   destroy(): void;
 }
@@ -86,6 +94,8 @@ interface Kept {
   trace: Trace; draft: EntryDraft; idEdited?: boolean; testing?: GuideMode;
   /** What appeared after each step (parallel to trace.steps), for AI wait suggestions. Never saved. */
   hints?: string[][];
+  /** The saved guide this was opened from (edit). */
+  from?: string;
 }
 
 const SEEN_KEY = 'trace-avatar:studio:seen';
@@ -340,6 +350,23 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
     review(kept);
   }
 
+  function edit(trace: Trace, e: { id: string; title?: string; modes?: GuideMode[]; pages?: string[] }) {
+    if (state === 'closed') return;
+    const p = parse(trace);
+    if (!p.ok) throw new Error(`not a valid trace: ${p.errors.map((x) => `${x.path || 'trace'} ${x.message}`).join('; ')}`);
+    stopTest();
+    rec?.destroy();
+    rec = null;
+    hideBar();
+    const copy: Trace = JSON.parse(JSON.stringify(trace));
+    const steps = expandPages(copy.steps);
+    const title = e.title ?? copy.meta?.title ?? '';
+    const modes = (e.modes?.length ? e.modes : ['overlay']).filter((m) => m === 'overlay' || performOk) as GuideMode[];
+    kept = { trace: { ...copy, steps }, draft: { id: e.id, title, modes, pages: e.pages ? [...e.pages] : [] }, idEdited: true, from: e.id };
+    ss.set(kept);
+    review(kept);
+  }
+
   // ── Review ─────────────────────────────────────────────────────────────────
   /** The trace as the author has it now (pages compacted again, title from the form). */
   const current = (): Trace | null => {
@@ -415,7 +442,7 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
     panel.textContent = '';
     panel.hidden = false;
     const close = h('button', { 'aria-label': 'Close the studio', onclick: () => closeStudio() }, '✕');
-    panel.append(h('div', { className: 'row' }, h('h2', {}, 'Review the guide'), close));
+    panel.append(h('div', { className: 'row' }, h('h2', {}, k?.from ? 'Edit the guide' : 'Review the guide'), close));
     if (!k) {
       panel.append(h('p', {}, 'Nothing was recorded.'), h('div', { className: 'row' }, h('button', { className: 'go', onclick: () => start() }, '● Record again'), h('button', { onclick: () => closeStudio() }, 'Close')));
       close.focus();
@@ -520,7 +547,7 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
     if (!opts.save) { download(); emitter.emit('save', { trace: t, entry: e }); return; }
     note('Saving…');
     try {
-      await opts.save(t, e);
+      await opts.save(t, e, kept?.from ? { from: kept.from } : {});
       note('Saved.');
       emitter.emit('save', { trace: t, entry: e });
     } catch (err) { note(`Could not save: ${(err as Error)?.message ?? err}`); }
@@ -611,6 +638,7 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
     get entry() { return entry(); },
     start,
     stop,
+    edit,
     on: (ev, fn) => emitter.on(ev, fn),
     destroy() {
       if (state === 'closed') return;

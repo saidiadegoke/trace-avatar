@@ -223,7 +223,7 @@ mount({
   guides: '/guides/index.json',
   record: {
     allowed: () => user.role === 'owner',              // checked before the studio loads
-    save: (trace, entry) => api.saveGuide(trace, entry), // default: a .trace.json download
+    save: (trace, entry, { from }) => api.saveGuide(trace, entry, from), // default: a .trace.json download
     requires: ['signed-in'],
   },
 });
@@ -242,6 +242,10 @@ before.
   or delete steps, mark checkpoints and pauses, set the title, id, modes and pages. **▶ Show me** and **▶ Do it for
   me** test it right there (Do it for me can cross page loads). **Save** hands `save` the trace and its manifest
   entry; **Download** and **Copy JSON** are always there, and the raw JSON is under "Advanced".
+- **To change a saved guide**, `guides.edit(id)` (or a `?trace-edit=id` link) opens it in the same review, again only
+  when `allowed()` says yes. Its save gets `{ from: id }` as a third argument, and so does a save from **Fix this
+  step**; a new recording gets `{}`. So your API can tell "replace this guide" from "a new guide whose id may already
+  be taken".
 - Saving is your app's job (your API, a CMS, a pull request); trace-avatar hosts nothing.
 
 Without the loader: `import { createStudio } from 'trace-avatar/studio'` (CDN: `trace-studio.min.js`, global

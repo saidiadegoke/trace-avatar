@@ -206,6 +206,7 @@ describe('studio: review', () => {
     expect(validateManifest({ version: 1, guides: [entry] }).ok).toBe(true);
     expect(sr(s).querySelector('.st')!.textContent).toBe('Saved.');
     expect(saved).toHaveBeenCalledWith({ trace, entry });
+    expect((save.mock.calls[0] as unknown[])[2]).toEqual({}); // a new recording: no `from`
   });
 
   it('a failing save says why; without save, Save downloads', async () => {
@@ -324,6 +325,65 @@ describe('studio: review', () => {
     click(btn(s, 'Apply JSON'));
     expect(sr(s).querySelectorAll('li')).toHaveLength(2);
     expect(s.trace!.steps).toEqual([{ type: 'note', say: 'Hello', page: '/a' }, { type: 'note', say: 'Bye' }]);
+  });
+});
+
+describe('studio: edit a saved guide', () => {
+  const saved = {
+    version: 1 as const,
+    meta: { title: 'Create an invoice', url: '/app/invoices' },
+    steps: [
+      { type: 'click' as const, page: '/app/invoices', target: { role: 'button', name: 'New invoice' }, say: 'Start here.' },
+      { type: 'hover' as const, target: { role: 'textbox', name: 'Customer' }, say: 'Who it is for.' },
+    ],
+  };
+
+  it('opens the review on the guide; its save says which guide it came from', async () => {
+    const save = vi.fn(async () => {});
+    const s = make({ save });
+    s.edit(saved, { id: 'new-invoice', title: 'Create an invoice', modes: ['overlay'], pages: ['/app/invoices'] });
+    expect(s.state).toBe('review');
+    expect(sr(s).querySelector('h2')!.textContent).toBe('Edit the guide');
+    expect(labelled(s, 'Id').value).toBe('new-invoice');
+    expect(labelled(s, 'Pages it is listed on').value).toBe('/app/invoices');
+    expect(input(s, 'Caption for step 2').value).toBe('Who it is for.');
+    typeInto(input(s, 'Caption for step 2'), 'The customer.');
+    typeInto(labelled(s, 'Title'), 'Make an invoice'); // the id stays: it is the guide's
+    expect(labelled(s, 'Id').value).toBe('new-invoice');
+    click(btn(s, 'Save'));
+    await tick();
+    const [trace, entry, info] = save.mock.calls[0] as unknown as [typeof saved, { id: string; modes: string[] }, { from?: string }];
+    expect(info).toEqual({ from: 'new-invoice' });
+    expect(entry).toMatchObject({ id: 'new-invoice', title: 'Make an invoice', modes: ['overlay'] });
+    expect(trace.steps[1].say).toBe('The customer.');
+    expect(trace.steps[0].page).toBe('/app/invoices');
+    expect(saved.steps[1].say).toBe('Who it is for.'); // the guide passed in is not changed
+  });
+
+  it('carries on across a page load, still knowing where it came from; a new recording forgets it', async () => {
+    const save = vi.fn(async () => {});
+    const s1 = make({ save });
+    s1.edit(saved, { id: 'new-invoice' });
+    s1.destroy();
+    const s2 = make({ save });
+    expect(s2.state).toBe('review');
+    expect(labelled(s2, 'Title').value).toBe('Create an invoice'); // from the trace's meta
+    click(btn(s2, 'Save'));
+    await tick();
+    expect((save.mock.calls[0] as unknown[])[2]).toEqual({ from: 'new-invoice' });
+    html('<button id="new">New invoice</button><input id="customer" aria-label="Customer" data-trace-reveal>');
+    recordSome(s2);
+    typeInto(labelled(s2, 'Title'), 'Another');
+    click(btn(s2, 'Save'));
+    await tick();
+    expect((save.mock.calls[1] as unknown[])[2]).toEqual({});
+  });
+
+  it('refuses a trace the player could not play; without Do it for me the mode is dropped', () => {
+    const s = make({ perform: false });
+    expect(() => s.edit({ version: 1, steps: [{ type: 'nope' }] } as never, { id: 'x' })).toThrow(/not a valid trace/);
+    s.edit(saved, { id: 'x', modes: ['overlay', 'perform'] });
+    expect(s.entry!.modes).toEqual(['overlay']);
   });
 });
 

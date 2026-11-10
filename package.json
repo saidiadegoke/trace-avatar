@@ -157,7 +157,7 @@
         "./studio.js",
         "./fix.js"
       ],
-      "limit": "6.5 KB"
+      "limit": "6.75 kB"
     },
     {
       "name": "CDN build",
@@ -198,7 +198,7 @@
         "./perform.js",
         "./studio-assist.js"
       ],
-      "limit": "15 KB"
+      "limit": "15250 B"
     },
     {
       "name": "studio CDN (trace-studio.min.js)",

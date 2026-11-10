@@ -126,3 +126,25 @@ test('Alt+Shift+R and ?trace-record=1 start recording; neither works when not al
   await expect(studio(page)).toHaveCount(0);
   expect(await page.locator('script[src*="trace-studio"]').count()).toBe(0);
 });
+
+test('?trace-edit=id opens a saved guide in the review; its save says which guide it replaces', async ({ page }) => {
+  await page.goto(`${APP}?trace-edit=saved-one`);
+  await expect(panel(page)).toBeVisible();
+  expect(new URL(page.url()).search).toBe('');
+  await expect(panel(page).getByRole('heading', { name: 'Edit the guide' })).toBeVisible();
+  await expect(panel(page).getByRole('textbox', { name: 'Id' })).toHaveValue('saved-one');
+  await panel(page).getByRole('textbox', { name: 'Caption for step 1' }).fill('Every invoice starts here.');
+  await panel(page).getByRole('button', { name: '▶ Show me' }).click();
+  await expect(panel(page)).toBeVisible({ timeout: 20_000 });
+  await panel(page).getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(panel(page)).toContainText('Saved.');
+  const saved = await page.evaluate(() => (window as any).saved);
+  expect(saved[0].info).toEqual({ from: 'saved-one' });
+  expect(saved[0].entry).toMatchObject({ id: 'saved-one', title: 'Start an invoice', modes: ['overlay'], pages: ['/elsewhere'] });
+  expect(saved[0].trace.steps[0].say).toBe('Every invoice starts here.');
+
+  // Not allowed: the link does nothing and the studio never loads.
+  await page.goto(`${APP}?deny&trace-edit=saved-one`);
+  await page.waitForTimeout(400);
+  await expect(studio(page)).toHaveCount(0);
+});

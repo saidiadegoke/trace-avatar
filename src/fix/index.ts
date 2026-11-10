@@ -30,7 +30,8 @@ export interface FixOptions {
   /** Asked only when no candidate is a clear winner. */
   ai?: Ai;
   /** Where a fixed guide goes. Without it, the fixed trace is downloaded. */
-  save?: (trace: Trace, entry: Guide) => void | Promise<void>;
+  /** Where the fixed guide goes; `info.from` is the guide's own id (it replaces a saved guide). */
+  save?: (trace: Trace, entry: Guide, info: { from?: string }) => void | Promise<void>;
   /** The step is fixed: carry on from `index` with this trace (past the end: the guide is done). */
   onFixed(trace: Trace, index: number): void;
   /** The author chose Stop. */
@@ -265,7 +266,7 @@ export function offerFix(o: FixOptions): Fix {
     }
     show('Saving…', []);
     try {
-      await o.save(trace, o.entry);
+      await o.save(trace, o.entry, { from: o.entry.id });
       show('Saved: the guide is fixed for everyone.', [['Close', () => close(), true]]);
     } catch (e) {
       show(`Could not save: ${(e as Error)?.message ?? e}`, [['Try again', () => void save(), true], ['Close', () => close()]]);

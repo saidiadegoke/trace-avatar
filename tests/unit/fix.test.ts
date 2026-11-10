@@ -222,8 +222,9 @@ describe('offerFix: saving', () => {
     press('Save the guide');
     await tick();
     expect(save).toHaveBeenCalledOnce();
-    const [t, entry] = save.mock.calls[0] as unknown as [Trace, typeof ENTRY];
+    const [t, entry, info] = save.mock.calls[0] as unknown as [Trace, typeof ENTRY, { from?: string }];
     expect(entry).toEqual(ENTRY);
+    expect(info).toEqual({ from: ENTRY.id }); // a fix replaces the saved guide
     expect(t.steps[1].target).toMatchObject({ name: 'Store invoice' });
     expect(msg()).toBe('Could not save: 403');
     fail = false;

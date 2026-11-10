@@ -2,11 +2,15 @@
 window.saved = [];
 const allowed = !location.search.includes('deny');
 window.guides = TraceAvatarAuto.mount({
-  guides: { version: 1, guides: [] },
+  // One saved guide, listed on another page (so this page's launcher stays empty), for ?trace-edit=saved-one.
+  guides: { version: 1, guides: [{ id: 'saved-one', title: 'Start an invoice', modes: ['overlay'], pages: ['/elsewhere'], trace: {
+    version: 1, meta: { title: 'Start an invoice' },
+    steps: [{ type: 'click', target: { sel: '#new', role: 'button', name: 'New invoice' }, say: 'Start here.' }],
+  } }] },
   perform: true,
   record: {
     allowed: () => allowed,
-    save: (trace, entry) => { window.saved.push({ trace, entry }); },
+    save: (trace, entry, info) => { window.saved.push({ trace, entry, info }); },
     // ?ai: a stand-in model that answers from what it is sent (and keeps every call to check what was sent).
     ...(location.search.includes('ai') ? { ai: async (task, input) => {
       (window.aiCalls ||= []).push({ task, input });

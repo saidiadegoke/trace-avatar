@@ -117,6 +117,11 @@ export interface GuidesController {
   readonly launcher: Launcher | null;
   /** Open the studio and start recording (when `record.allowed()` says yes). */
   record(): Promise<Studio | null>;
+  /**
+   * Open a guide from the manifest in the studio's review, to change it (when `record.allowed()` says yes).
+   * Its save carries `{ from: id }`. Also `?trace-edit=id`.
+   */
+  edit(id: string): Promise<Studio | null>;
   /** The open studio. */
   readonly studio: Studio | null;
   destroy(): void;
@@ -198,6 +203,9 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
   const fixedTraces = new Map<string, Trace>();
   let fix: Fix | null = null;
   const traceOf = (g: NGuide) => fixedTraces.get(g.id) ?? (typeof g.trace === 'string' ? new URL(g.trace, base).href : g.trace);
+  /** A guide's trace as authored: fixed in this session, inline, or fetched from its file. */
+  const rawTraceOf = async (g: NGuide): Promise<Trace> => fixedTraces.get(g.id)
+    ?? (typeof g.trace === 'string' ? await (await fetch(new URL(g.trace, base).href)).json() : g.trace);
   const loadPlayer = () => (player ??= loaders.player().catch((e) => { player = null; throw e; }));
 
   function clearCurrent(kind: 'end' | 'stop' | null) {
@@ -285,7 +293,7 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     let raw: Trace;
     try {
       mod = await loaders.fix();
-      raw = fixedTraces.get(g.id) ?? (typeof g.trace === 'string' ? await (await fetch(new URL(g.trace, base).href)).json() : g.trace);
+      raw = await rawTraceOf(g);
     } catch (e) { fail(`could not offer a fix: ${(e as Error).message}`, g.id); return; }
     if (current !== entry || destroyed || (fix && fix.state !== 'fixed' && fix.state !== 'closed')) return;
     fix?.close();
@@ -414,6 +422,22 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
       } finally { opening = null; }
     })());
   }
+  /** Open a saved guide in the studio's review. */
+  async function edit(id: string): Promise<Studio | null> {
+    if (!(await mayRecord()) || destroyed) return null;
+    try { await ready; } catch { return null; }
+    const g = manifest && findGuide(manifest, id);
+    if (!g) { fail(`no guide "${id}" in the manifest`, id); return null; }
+    let raw: Trace;
+    try { raw = await rawTraceOf(g); } catch (e) { fail(`could not load "${id}": ${(e as Error).message}`, id); return null; }
+    const s = await openStudio(false);
+    if (!s || destroyed) return null;
+    clearCurrent(current ? 'stop' : null);
+    try {
+      s.edit(raw, { id: g.id, title: g.title, ...(g.modes?.length ? { modes: [...g.modes] } : {}), ...(g.pages?.length ? { pages: [...g.pages] } : {}) });
+    } catch (e) { fail(`could not edit "${id}": ${(e as Error).message}`, id); return null; }
+    return s;
+  }
   const onKey = (e: KeyboardEvent) => {
     const sc = rec?.shortcut ?? 'Alt+Shift+R';
     if (!sc || e.repeat || !matchShortcut(sc, e, /Mac|iPhone|iPad/.test(win?.navigator?.platform ?? ''))) return;
@@ -431,8 +455,16 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
       url.searchParams.delete(recParam);
       try { win.history.replaceState(win.history.state, '', url.href); } catch { /* sandboxed */ }
     }
+    // ?trace-edit=id opens that guide in the review (it too needs allowed()).
+    const editParam = `${param}-edit`;
+    const editId = url.searchParams.get(editParam);
+    if (editId !== null) {
+      url.searchParams.delete(editParam);
+      try { win.history.replaceState(win.history.state, '', url.href); } catch { /* sandboxed */ }
+    }
     // A recording or a review going on when the last page unloaded carries on here.
-    if (asked || studioWaiting((k) => win.sessionStorage.getItem(k))) void openStudio(asked);
+    if (editId) void edit(editId);
+    else if (asked || studioWaiting((k) => win.sessionStorage.getItem(k))) void openStudio(asked);
   }
 
   return {
@@ -447,6 +479,7 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
     on: (ev, fn) => emitter.on(ev, fn),
     launcher,
     record: () => openStudio(true),
+    edit: (id) => edit(id),
     get studio() { return studio; },
     destroy() {
       if (destroyed) return;

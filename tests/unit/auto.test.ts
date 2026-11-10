@@ -536,7 +536,7 @@ describe('mount: links', () => {
 });
 
 describe('mount: recording guides (record)', () => {
-  type FakeStudio = { state: string; started: number; destroyed: boolean; opts: Record<string, unknown>; start(): void; destroy(): void };
+  type FakeStudio = { state: string; started: number; destroyed: boolean; opts: Record<string, unknown>; edits: unknown[][]; start(): void; destroy(): void; edit(...a: unknown[]): void };
   function fakeStudio(o: { fail?: boolean } = {}) {
     const made: FakeStudio[] = [];
     const load = vi.fn(async () => {
@@ -544,8 +544,9 @@ describe('mount: recording guides (record)', () => {
       return {
         createStudio(opts: Record<string, unknown>) {
           const s: FakeStudio = {
-            state: 'idle', started: 0, destroyed: false, opts,
+            state: 'idle', started: 0, destroyed: false, opts, edits: [],
             start() { s.started += 1; s.state = 'recording'; },
+            edit(...a: unknown[]) { s.edits.push(a); s.state = 'review'; },
             destroy() { s.destroyed = true; },
           };
           made.push(s);
@@ -655,6 +656,42 @@ describe('mount: recording guides (record)', () => {
     sessionStorage.setItem('trace-avatar:rec:studio', '{}');
     const no = goRec({ allowed: () => false });
     await tick();
+    expect(no.st.load).not.toHaveBeenCalled();
+  });
+
+  it('edit(id) opens a guide from the manifest in the review (inline or fetched), only when allowed', async () => {
+    const file = { version: 1, steps: [{ type: 'note', say: 'from the file' }] };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(file)));
+    const { g, st, p } = goRec({ allowed: () => true });
+    await g.play('inline');
+    const s = await g.edit('inline');
+    expect(s).toBe(st.made[0]);
+    expect(st.made[0].started).toBe(0);
+    expect(st.made[0].edits[0]).toEqual([{ version: 1, steps: [{ type: 'note', say: 'hi' }] }, { id: 'inline', title: 'Inline', modes: ['overlay'] }]);
+    expect(p.made[0].ctl.destroyed).toBe(true); // the guide playing stops
+    await g.edit('invoice');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:3000/traces/invoice.trace.json'.replace('http://localhost:3000', location.origin));
+    expect(st.made[0].edits[1]).toEqual([file, { id: 'invoice', title: 'Create an invoice', modes: ['overlay', 'perform'], pages: ['/app'] }]);
+    const errors: Error[] = [];
+    g.on('error', (e) => errors.push(e));
+    expect(await g.edit('nope')).toBeNull();
+    expect(errors[0].message).toBe('no guide "nope" in the manifest');
+    const no = goRec({ allowed: () => false });
+    expect(await no.g.edit('inline')).toBeNull();
+    expect(no.st.load).not.toHaveBeenCalled();
+  });
+
+  it('?trace-edit=id is taken out of the address and opens that guide, only when allowed', async () => {
+    history.replaceState({}, '', '/app?trace-edit=inline&y=2');
+    const { st } = goRec({ allowed: () => true });
+    expect(location.search).toBe('?y=2');
+    await tick(20);
+    expect(st.made[0].edits[0][1]).toEqual({ id: 'inline', title: 'Inline', modes: ['overlay'] });
+    expect(st.made[0].started).toBe(0);
+    history.replaceState({}, '', '/app?trace-edit=inline');
+    const no = goRec({ allowed: () => false });
+    expect(location.search).toBe('');
+    await tick(20);
     expect(no.st.load).not.toHaveBeenCalled();
   });
 

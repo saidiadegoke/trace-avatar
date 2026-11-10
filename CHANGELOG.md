@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.12 (10 Nov 2026)
+
+- **Edit a saved guide in the studio:** `studio.edit(trace, entry)` opens the review on a guide that already exists
+  (captions, order, checkpoints, title, modes, pages, Advanced JSON, test plays), and the loader's `guides.edit(id)`
+  and `?trace-edit=id` open a guide from the manifest there, only when `record.allowed()` says yes. The review is
+  headed "Edit the guide" and carries on across page loads like any review.
+- **`save` says what it replaces:** the studio's and Fix this step's `save(trace, entry, info)` get a third
+  argument. `info.from` is the id of the saved guide the author opened (edit, Fix this step); a new recording gets
+  `{}`. An app can then refuse to overwrite a guide by accident when a new recording's id is already taken.
+- **React:** `<TraceGuides record={{ ai }}>` uses the latest render's `ai`, and adding or removing it remounts.
+- Budgets: React TraceGuides 6.5 → 6.75 KB (6.62 KB), studio 15 → 15.25 KB (15.0 KB). Found adding the editing
+  flow for DutyCaptain's guides.
+
 ## 0.1.11 (9 Nov 2026)
 
 - **Do it for me brings rich-text editors to what was typed.** 0.1.10's fixes still lost, doubled or reordered

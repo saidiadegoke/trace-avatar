@@ -97,7 +97,7 @@ export interface TraceGuidesProps extends MountOptions {
 export function guidesKey(o: MountOptions): string {
   const r = o.record;
   return JSON.stringify([o.guides, o.launcher ?? 'bottom-right', !!o.perform, o.controls ?? true, o.captions, o.rate, o.avatar, o.links ?? true, o.linkParam ?? 'trace',
-    r ? [!!r.save, r.requires, r.maskByDefault, r.shortcut] : null]);
+    r ? [!!r.save, !!r.ai, r.requires, r.maskByDefault, r.shortcut] : null]);
 }
 
 /**
@@ -120,7 +120,8 @@ export function TraceGuides(props: TraceGuidesProps): null {
       record: props.record ? {
         ...props.record,
         allowed: () => h.current.record?.allowed() ?? false,
-        save: props.record.save ? (t, e) => h.current.record?.save?.(t, e) : undefined,
+        save: props.record.save ? (t, e, i) => h.current.record?.save?.(t, e, i) : undefined,
+        ai: props.record.ai ? (task, input, schema, o) => h.current.record!.ai!(task, input, schema, o) : undefined,
       } : undefined,
     });
     const off = g.on('error', (e) => h.current.onError?.(e));

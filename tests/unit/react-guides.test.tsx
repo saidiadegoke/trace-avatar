@@ -82,8 +82,9 @@ describe('<TraceGuides>', () => {
     expect(calls).toHaveLength(1);
     const r = calls[0].opts.record!;
     expect(r.allowed()).toBe(true);
-    await r.save!({ version: 1, steps: [] }, { id: 'x', title: 'X', trace: 'x.trace.json' });
+    await r.save!({ version: 1, steps: [] }, { id: 'x', title: 'X', trace: 'x.trace.json' }, { from: 'x' });
     expect(save2).toHaveBeenCalledTimes(1);
+    expect(save2.mock.calls[0][2]).toEqual({ from: 'x' });
     expect(save1).not.toHaveBeenCalled();
     expect(r.requires).toEqual(['a']);
     act(() => root.render(<TraceGuides guides={M} record={{ allowed: () => true, save: save2, requires: ['b'] }} />));
@@ -95,5 +96,16 @@ describe('<TraceGuides>', () => {
     expect(guidesKey({ guides: M, record: { allowed: () => true, shortcut: false } })).not.toBe(guidesKey({ guides: M, record: { allowed: () => true } }));
     act(() => root.render(<TraceGuides guides={M} record={{ allowed: () => true }} />));
     expect(calls[3].opts.record!.save).toBeUndefined();
+    expect(calls[3].opts.record!.ai).toBeUndefined();
+  });
+
+  it('record.ai comes from the latest render, and adding it remounts', async () => {
+    const ai1 = vi.fn(async () => 1); const ai2 = vi.fn(async () => 2);
+    act(() => root.render(<TraceGuides guides={M} record={{ allowed: () => true, ai: ai1 }} />));
+    act(() => root.render(<TraceGuides guides={M} record={{ allowed: () => true, ai: ai2 }} />));
+    expect(calls).toHaveLength(1);
+    expect(await calls[0].opts.record!.ai!('title', {}, {}, { instructions: '' })).toBe(2);
+    expect(ai1).not.toHaveBeenCalled();
+    expect(guidesKey({ guides: M, record: { allowed: () => true, ai: ai1 } })).not.toBe(guidesKey({ guides: M, record: { allowed: () => true } }));
   });
 });

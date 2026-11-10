@@ -14,7 +14,7 @@ import { createStudio as createWith } from './studio.dom';
 import type { Studio, StudioLoaders, StudioOptions } from './studio.dom';
 
 export { STUDIO_CSS } from './studio.dom';
-export type { Studio, StudioEvents, StudioLoaders, StudioOptions, StudioPlayer, StudioState } from './studio.dom';
+export type { SaveInfo, Studio, StudioEvents, StudioLoaders, StudioOptions, StudioPlayer, StudioState } from './studio.dom';
 export { STUDIO_PERSIST, STUDIO_REC_KEY, STUDIO_REVIEW_KEY, studioWaiting } from '../core/studio-keys';
 export { compactPages, entryOf, expandPages, guideId, moveStep, pagesOf, removeStep, stepLabel } from '../core/review';
 export type { EntryDraft } from '../core/review';
