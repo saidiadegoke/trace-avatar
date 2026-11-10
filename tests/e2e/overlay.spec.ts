@@ -82,7 +82,13 @@ test("scroll: 'auto' leaves the page where the viewer scrolled it; 'never' never
   await page.mouse.move(200, 200);
   await page.mouse.wheel(0, 150);
   await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
-  const y = await page.evaluate(() => scrollY);
+  // The wheel scrolls smoothly in some browsers (Linux WebKit): read where it came to rest.
+  const settled = () => page.evaluate(() => new Promise<number>((res) => {
+    let last = scrollY;
+    let still = 0;
+    const id = setInterval(() => { if (scrollY === last) { still += 1; if (still >= 4) { clearInterval(id); res(scrollY); } } else { still = 0; last = scrollY; } }, 50);
+  }));
+  const y = await settled();
   await ended(page);
   await page.waitForTimeout(400);
   expect(await page.evaluate(() => scrollY)).toBe(y);

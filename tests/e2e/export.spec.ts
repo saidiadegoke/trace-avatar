@@ -9,13 +9,24 @@ import omggif from 'omggif';
 
 const URL_ = '/tests/e2e/fixtures/export.html';
 
-/** Replace getDisplayMedia with a painted canvas stream (2× the viewport, like a hi-dpi tab). */
-async function fakeShare(page: Page, how: 'ok' | 'deny' = 'ok', area = '#app') {
+/**
+ * Playwright's Linux WebKit can't play a MediaStream in a <video>: play() never settles and no picture
+ * comes (no media backend in that build). macOS WebKit and Safari can, so these run there.
+ */
+const NO_STREAM_PLAYBACK = (browserName: string) => browserName === 'webkit' && process.platform === 'linux';
+const NO_STREAM_WHY = "Playwright's Linux WebKit can't play a MediaStream in a <video>";
+
+/**
+ * Replace getDisplayMedia with a painted canvas stream (2× the viewport, like a hi-dpi tab). 'blank' shares
+ * a stream that never sends a picture.
+ */
+async function fakeShare(page: Page, how: 'ok' | 'deny' | 'blank' = 'ok', area = '#app') {
   await page.addInitScript(([how, area]) => {
     const md = (navigator.mediaDevices ?? {}) as MediaDevices;
     if (!navigator.mediaDevices) Object.defineProperty(navigator, 'mediaDevices', { value: md });
     (md as unknown as Record<string, unknown>).getDisplayMedia = async () => {
       if (how === 'deny') throw new DOMException('Permission denied', 'NotAllowedError');
+      if (how === 'blank') { const s = new MediaStream(); (window as unknown as { __stream: MediaStream }).__stream = s; return s; }
       const cv = document.createElement('canvas');
       cv.width = innerWidth * 2;
       cv.height = innerHeight * 2;
@@ -59,7 +70,8 @@ function gifFrames(b64: string) {
 }
 
 test.describe('Save as video', () => {
-  test('GIF: cropped to the area, scaled, the long wait cut to 0.8 s, named from the title', async ({ page }) => {
+  test('GIF: cropped to the area, scaled, the long wait cut to 0.8 s, named from the title', async ({ page, browserName }) => {
+    test.skip(NO_STREAM_PLAYBACK(browserName), NO_STREAM_WHY);
     await fakeShare(page);
     await page.goto(URL_);
     const r = await page.evaluate(() => (window as unknown as { __save(o?: object): Promise<Record<string, unknown>> }).__save({ format: 'gif' }));
@@ -93,11 +105,12 @@ test.describe('Save as video', () => {
     expect(r.durationMs as number).toBeLessThan(6500);
   });
 
-  test('a refused share, and sharing stopped midway, reject with reasons', async ({ page }) => {
+  test('a refused share, and sharing stopped midway, reject with reasons', async ({ page, browserName }) => {
     await fakeShare(page, 'deny');
     await page.goto(URL_);
     const denied = await page.evaluate(() => (window as unknown as { __save(): Promise<Record<string, unknown>> }).__save());
     expect(denied).toMatchObject({ error: 'denied', name: 'ExportError' });
+    if (NO_STREAM_PLAYBACK(browserName)) return; // stopping midway needs a share that plays (NO_STREAM_WHY)
 
     const p2 = await page.context().newPage();
     await fakeShare(p2);
@@ -116,6 +129,17 @@ test.describe('Save as video', () => {
   });
 });
 
+test('a share that never sends a picture fails in seconds, says why, and stops sharing', async ({ page }) => {
+  await fakeShare(page, 'blank');
+  await page.goto(URL_);
+  const t0 = Date.now();
+  const r = await page.evaluate(() => (window as unknown as { __save(o?: object): Promise<Record<string, unknown>> }).__save({ format: 'gif' }));
+  expect(r).toMatchObject({ error: 'failed', name: 'ExportError' });
+  expect(String(r.message)).toContain('the shared tab sent no picture');
+  expect(Date.now() - t0).toBeLessThan(8000);
+  expect(await page.evaluate(() => (window as unknown as { __phase?: string }).__phase)).not.toBe('playing');
+});
+
 test('the playground: the button says what it saves', async ({ page }) => {
   await page.goto('/playground/');
   await expect(page.locator('#save-video')).toHaveText('Save as GIF');
@@ -125,7 +149,8 @@ test('the playground: the button says what it saves', async ({ page }) => {
   await expect(page.locator('#save-video')).toHaveText('Save as GIF');
 });
 
-test('the playground: Save as GIF downloads a GIF of the app from a fresh form, with progress', async ({ page }) => {
+test('the playground: Save as GIF downloads a GIF of the app from a fresh form, with progress', async ({ page, browserName }) => {
+  test.skip(NO_STREAM_PLAYBACK(browserName), NO_STREAM_WHY);
   await fakeShare(page, 'ok', '.app');
   await page.goto('/playground/');
   await expect(page.locator('#json')).not.toHaveValue('');

@@ -1,5 +1,10 @@
 # trace-avatar
 
+[![npm](https://img.shields.io/npm/v/trace-avatar)](https://www.npmjs.com/package/trace-avatar)
+[![CI](https://github.com/saidiadegoke/trace-avatar/actions/workflows/ci.yml/badge.svg)](https://github.com/saidiadegoke/trace-avatar/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/npm/l/trace-avatar)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/saidiadegoke/trace-avatar?style=social)](https://github.com/saidiadegoke/trace-avatar)
+
 **Show your users how, or do it for them.** One trace, two modes, on your real page:
 
 - **Show me**: a smooth, human-looking ghost cursor walks through the steps over the page, with captions. It never

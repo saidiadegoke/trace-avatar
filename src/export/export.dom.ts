@@ -98,9 +98,14 @@ export async function saveVideoWith(controller: TraceController, o: SaveVideoOpt
   let rec: MediaRecorder | null = null;
 
   try {
-    await video.play();
-    for (let k = 0; k < 100 && !video.videoWidth; k += 1) await sleep(20);
-    if (!video.videoWidth) throw new ExportError('failed', 'the shared tab sent no picture');
+    // play() is not awaited on its own: where the browser can't play the stream it never settles (Linux
+    // WebKit), and the export would wait forever. A picture within 2 s is what matters.
+    let refused: unknown = null;
+    video.play().catch((e: unknown) => { refused = e; });
+    for (let k = 0; k < 100 && !video.videoWidth && !refused; k += 1) await sleep(20);
+    if (!video.videoWidth) {
+      throw new ExportError('failed', `the shared tab sent no picture${refused ? `: ${(refused as Error).message || (refused as DOMException).name}` : ''}`);
+    }
     await sleep(300); // the browser's "sharing this tab" bar may resize the page first
 
     const viewport = () => ({ w: win.innerWidth, h: win.innerHeight });
