@@ -4,6 +4,7 @@ import { TraceError, createTrace } from '../../src/index';
 import type { ClockPort, InputPort, TraceOptions } from '../../src/index';
 import type { Trace } from '../../src/core/format';
 import { html, setRect } from './dom-helpers';
+import { createPerformer } from '../../src/shell/perform.dom';
 
 /** A manual clock: frames run only when the test says so. */
 function manualClock() {
@@ -31,7 +32,8 @@ function manualClock() {
 
 function manualInput() {
   let cb: ((e: PointerEvent | KeyboardEvent) => void) | null = null;
-  const port: InputPort = { watch: (fn) => { cb = fn; return () => { cb = null; }; } };
+  let ch: ((e: Event) => void) | null = null;
+  const port: InputPort = { watch: (fn) => { cb = fn; return () => { cb = null; }; }, changes: (fn) => { ch = fn; return () => { ch = null; }; } };
   return {
     port,
     get active() { return !!cb; },
@@ -41,6 +43,12 @@ function manualInput() {
       return e;
     },
     pointer() { cb?.({ type: 'pointerdown', target: document.body } as unknown as PointerEvent); },
+    change(target: EventTarget) { ch?.({ type: 'change', target } as unknown as Event); },
+    keyIn(key: string, target: EventTarget, o: { shiftKey?: boolean } = {}) {
+      const e = { type: 'keydown', key, target, shiftKey: !!o.shiftKey, isComposing: false, preventDefault: vi.fn() } as unknown as KeyboardEvent;
+      cb?.(e);
+      return e;
+    },
   };
 }
 
@@ -689,5 +697,168 @@ describe('perform mode, prepare, reset, resume, until (0.1.2)', () => {
     clock.run(1500);
     expect(stalls).toEqual([expect.objectContaining({ index: 0, reason: 'until-timeout', seen: [{ text: 'Invoice stored', element: toast }] })]);
     toast.remove();
+  });
+});
+
+describe('Do it for me does what it can; security holds back; the viewer carries on (0.1.14)', () => {
+  const hands = () => {
+    const calls: unknown[][] = [];
+    const typed: string[] = [];
+    const uploads: Array<{ el: string; files: unknown }> = [];
+    let uploadFails = false;
+    const real = createPerformer(document);
+    const performer = vi.fn(() => ({
+      // The real rules (security, values, the file input), with the actions recorded.
+      whyNot: real.whyNot, textFor: real.textFor, secret: real.secret, fileInput: real.fileInput,
+      click: (el: Element) => { calls.push(['click', el.id]); },
+      hover() {}, key() {},
+      startTyping: (el: Element) => { calls.push(['start', el.id]); return el; },
+      typeTo: (_f: Element, text: string, from: number, to: number) => { typed.push(text.slice(from, to)); },
+      finishTyping: () => { calls.push(['finish']); },
+      focus: (el: Element) => { calls.push(['focus', el.id]); },
+      upload: async (el: Element, files: unknown) => { uploads.push({ el: el.id, files }); if (uploadFails) throw new Error('no file input here'); },
+    }));
+    return { calls, typed: () => typed.join(''), uploads, performer, fail: () => { uploadFails = true; } };
+  };
+  const page = (inner: string) => {
+    html(inner);
+    for (const el of Array.from(document.querySelectorAll('[id]'))) setRect(el as HTMLElement, 100, 100);
+  };
+  const caption = () => document.querySelector('[data-trace-avatar]')!.shadowRoot!.querySelector('.turn-card')!;
+
+  it('by default it types what the trace knows into a password field', async () => {
+    page('<input id="pw" type="password"><button id="go">Go</button>');
+    const h = hands();
+    const t = make({ trace: { version: 1, steps: [{ type: 'type', target: { sel: '#pw' }, text: 'demo-pass', t: 300 }, { type: 'click', target: { sel: '#go' } }] }, mode: 'perform', performer: h.performer });
+    await t.ready;
+    t.play();
+    clock.run(6000);
+    expect(h.typed()).toBe('demo-pass');
+    expect(t.state).toBe('ended');
+  });
+
+  it('a value passed at play time stands in for a masked field, even with security on', async () => {
+    page('<label for="pw">Password</label><input id="pw" type="password"><button id="go">Go</button>');
+    const h = hands();
+    const handoff = vi.fn();
+    const steps = [{ type: 'type' as const, target: { role: 'textbox', name: 'Password' }, text: '••••', mask: true, t: 300 }, { type: 'click' as const, target: { sel: '#go' } }];
+    const t = make({ trace: { version: 1, steps }, mode: 'perform', performer: h.performer, security: true, values: { password: 'hunter22' } });
+    await t.ready;
+    t.on('handoff', handoff);
+    t.play();
+    clock.run(6000);
+    expect(handoff).not.toHaveBeenCalled();
+    expect(h.typed()).toBe('hunter22');
+    expect(h.calls).toContainEqual(['click', 'go']);
+  });
+
+  it("security 'secrets' hands a password to the viewer; Enter in it carries on and isn't sent to the form", async () => {
+    page('<form><input id="pw" type="password"></form><button id="go">Go</button>');
+    const h = hands();
+    const handoff = vi.fn();
+    const t = make({ trace: { version: 1, steps: [{ type: 'type', target: { sel: '#pw' }, text: 'kept', t: 300 }, { type: 'click', target: { sel: '#go' } }] }, mode: 'perform', performer: h.performer, security: ['secrets'] });
+    await t.ready;
+    t.on('handoff', handoff);
+    t.play();
+    clock.run(1500);
+    expect(t.state).toBe('paused');
+    expect(handoff).toHaveBeenCalledWith(expect.objectContaining({ index: 0, why: 'secret' }));
+    expect(h.typed()).toBe('');
+    expect(caption().classList.contains('on')).toBe(true);
+    expect(caption().textContent).toContain('Type in “#pw”, then press Enter.');
+    // A key elsewhere does nothing; Enter in the field carries on.
+    input.keyIn('Enter', document.body);
+    expect(t.state).toBe('paused');
+    const e = input.keyIn('Enter', document.getElementById('pw')!);
+    expect(e.preventDefault).toHaveBeenCalled();
+    clock.run(3000);
+    expect(h.calls).toContainEqual(['click', 'go']);
+    expect(t.state).toBe('ended');
+    expect(caption().classList.contains('on')).toBe(false);
+  });
+
+  it("security 'money' hands an amount field over; Tab carries on (Enter adds a line in a text area)", async () => {
+    page('<textarea id="amount" name="amount"></textarea><button id="go">Go</button>');
+    const h = hands();
+    const t = make({ trace: { version: 1, steps: [{ type: 'type', target: { sel: '#amount' }, text: '5000', t: 300 }, { type: 'click', target: { sel: '#go' } }] }, mode: 'perform', performer: h.performer, security: ['money'] });
+    await t.ready;
+    t.play();
+    clock.run(1500);
+    expect(t.state).toBe('paused');
+    expect(caption().textContent).toContain('then press Tab.');
+    input.keyIn('Enter', document.getElementById('amount')!);
+    expect(t.state).toBe('paused');
+    input.keyIn('Tab', document.getElementById('amount')!);
+    clock.run(3000);
+    expect(t.state).toBe('ended');
+  });
+
+  it('Done on the card carries on', async () => {
+    page('<input id="pw" type="password"><button id="go">Go</button>');
+    const h = hands();
+    const t = make({ trace: { version: 1, steps: [{ type: 'type', target: { sel: '#pw' }, text: '•', mask: true, t: 300 }, { type: 'click', target: { sel: '#go' } }] }, mode: 'perform', performer: h.performer });
+    await t.ready;
+    t.play();
+    clock.run(1500);
+    expect(t.state).toBe('paused');
+    (caption().querySelector('button') as HTMLButtonElement).click();
+    clock.run(3000);
+    expect(h.calls).toContainEqual(['click', 'go']);
+  });
+
+  it('an upload with a sample file is attached; without one it is the viewer’s, and choosing a file carries on', async () => {
+    page('<button id="attach">Attach files</button><input id="file" type="file" style="display:none"><button id="go">Go</button>');
+    const h = hands();
+    const sample = [{ name: 'prices.csv', type: 'text/csv', text: 'item,price\nbread,1200\n' }];
+    const t = make({ trace: { version: 1, steps: [{ type: 'upload', target: { sel: '#attach' }, files: sample, t: 300 }, { type: 'click', target: { sel: '#go' } }] }, mode: 'perform', performer: h.performer });
+    await t.ready;
+    t.play();
+    clock.run(6000);
+    expect(h.uploads).toEqual([{ el: 'attach', files: sample }]);
+    expect(t.state).toBe('ended');
+
+    const h2 = hands();
+    const handoff = vi.fn();
+    const u = make({ trace: { version: 1, steps: [{ type: 'upload', target: { sel: '#attach' }, files: [{ name: 'prices.csv', size: 22 }], t: 300 }, { type: 'click', target: { sel: '#go' } }] }, mode: 'perform', performer: h2.performer });
+    await u.ready;
+    u.on('handoff', handoff);
+    u.play();
+    clock.run(1500);
+    expect(u.state).toBe('paused');
+    expect(handoff).toHaveBeenCalledWith(expect.objectContaining({ why: 'no-file' }));
+    expect(h2.uploads).toEqual([]);
+    const fileInput = document.getElementById('file') as HTMLInputElement;
+    Object.defineProperty(fileInput, 'files', { value: [new File(['x'], 'mine.csv')] });
+    input.change(fileInput);
+    clock.run(3000);
+    expect(h2.calls).toContainEqual(['click', 'go']);
+  });
+
+  it("security 'files' attaches nothing; an upload that fails is handed over too", async () => {
+    page('<input id="file" type="file"><button id="go">Go</button>');
+    const steps = [{ type: 'upload' as const, target: { sel: '#file' }, files: [{ name: 'a.txt', text: 'a' }], t: 300 }, { type: 'click' as const, target: { sel: '#go' } }];
+    const h = hands();
+    const handoff = vi.fn();
+    const t = make({ trace: { version: 1, steps }, mode: 'perform', performer: h.performer, security: ['files'] });
+    await t.ready;
+    t.on('handoff', handoff);
+    t.play();
+    clock.run(1500);
+    expect(h.uploads).toEqual([]);
+    expect(handoff).toHaveBeenCalledWith(expect.objectContaining({ why: 'file' }));
+
+    const h2 = hands();
+    h2.fail();
+    const errors: string[] = [];
+    const u = make({ trace: { version: 1, steps }, mode: 'perform', performer: h2.performer });
+    await u.ready;
+    u.on('error', (e) => errors.push(e.message));
+    u.play();
+    clock.run(1000);
+    await Promise.resolve(); await Promise.resolve();
+    clock.run(500);
+    expect(errors).toEqual(['perform step 0 (upload) failed: no file input here']);
+    expect(u.state).toBe('paused');
+    expect(caption().textContent).toContain('Choose a file for “#file”.');
   });
 });

@@ -16,7 +16,7 @@ export interface TraceHandlers {
   onStalled?: (e: StalledEvent) => void;
   /** The next step is on another page (see `navigate`). */
   onPage?: (e: PageEvent) => void;
-  /** Perform mode reached a masked field: the viewer types it. */
+  /** Perform mode handed a step to the viewer (a field, a file, a frame); they carry on with Enter, Tab, a file or Done. */
   onHandoff?: (e: HandoffEvent) => void;
   /** `prepare` said no: the guide did not start. */
   onBlocked?: (e: BlockedEvent) => void;
@@ -31,7 +31,7 @@ export type UseTraceOptions = TraceOptions & TraceHandlers & { enabled?: boolean
 export function optionsKey(o: UseTraceOptions): string {
   return JSON.stringify([
     o.trace, o.avatar, o.controls, o.autoplay, o.loop, o.captions, o.takeover, o.scroll, o.keyboard, o.seed, o.reducedMotion, o.enabled ?? true,
-    o.mode ?? 'overlay', o.resumeKey ?? null,
+    o.mode ?? 'overlay', o.resumeKey ?? null, o.security ?? null, o.values ?? null,
   ]);
 }
 
@@ -96,7 +96,7 @@ export interface TraceGuidesProps extends MountOptions {
 /** A stable key for the options that require remounting the guides. */
 export function guidesKey(o: MountOptions): string {
   const r = o.record;
-  return JSON.stringify([o.guides, o.launcher ?? 'bottom-right', !!o.perform, o.controls ?? true, o.captions, o.rate, o.avatar, o.links ?? true, o.linkParam ?? 'trace',
+  return JSON.stringify([o.guides, o.launcher ?? 'bottom-right', !!o.perform, o.controls ?? true, o.captions, o.rate, o.avatar, o.links ?? true, o.linkParam ?? 'trace', o.security ?? null, o.values ?? null,
     r ? [!!r.save, !!r.ai, r.requires, r.maskByDefault, r.shortcut] : null]);
 }
 

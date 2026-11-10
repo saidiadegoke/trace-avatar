@@ -8,9 +8,11 @@
  * (page, renderer, input, clock) and runs the read → update → write frame loop.
  */
 
-import { parse } from './core/format';
+import { hasSample, parse } from './core/format';
 import type { Avatar, NStep, NormalisedTrace, Trace, ValidationError } from './core/format';
-import { initial, onPage, update, view } from './core/player';
+import { initial, onPage, turnCaption, update, view } from './core/player';
+import type { HandoffWhy, Security, Values } from './core/security';
+import { isMultiline } from './shell/field.dom';
 import type { Config, Effect, Msg, Phase, PlayerState, ResolvedBy, View, Viewport } from './core/player';
 import { createEmitter } from './shell/emitter';
 import { createInput, isEditable } from './shell/input.dom';
@@ -24,7 +26,9 @@ import type { CaptionMode, Command, RendererOptions } from './shell/renderer.sha
 
 export { parse, validate, stepAt, labelOf, pageMatches, LIMITS, TIMING, STEP_TYPES } from './core/format';
 export type { Trace, Step, Target, Avatar, Meta, NStep, NormalisedTrace, ValidationError, StepType, Point, Until } from './core/format';
-export type { Phase, View, ResolvedBy, Look } from './core/player';
+export type { Phase, View, ResolvedBy, Look, Turn } from './core/player';
+export type { Guard, Security, Values, HandoffWhy } from './core/security';
+export type { FileSpec } from './core/format';
 export { formatKeys } from './core/player';
 export { simplify } from './core/motion';
 export { bySelector, byRoleAndName, byText, accessibleName, isUsable, DEFAULT_LOCATORS } from './shell/page.dom';
@@ -42,8 +46,12 @@ export interface StalledEvent {
    */
   seen?: SeenText[];
 }
-/** Perform mode reached a masked field: the viewer types it, then presses play. */
-export interface HandoffEvent { index: number; step: NStep; element: Element | null }
+/**
+ * Perform mode handed a step to the viewer (`why`): a field whose text it doesn't know or may not type, a file
+ * to choose, a frame it can't reach. It carries on when they press Enter or Tab in the field, choose the file,
+ * or press Done.
+ */
+export interface HandoffEvent { index: number; step: NStep; element: Element | null; why: HandoffWhy }
 /** `prepare` said no (or threw): the guide did not start. */
 export interface BlockedEvent { requires: string[]; say: string; error?: unknown }
 /** What `prepare` returns: true to start, false (or `{ ok: false, say }`) to block with a message. */
@@ -109,6 +117,17 @@ export interface TraceOptions {
    * Perform mode is for sandbox or demo data: a trace can click anything the page allows.
    */
   mode?: 'overlay' | 'perform';
+  /**
+   * Perform mode, what it may not do by itself (default: nothing held back; it types every value it knows and
+   * attaches every sample file). true holds back all of them; or a list: 'secrets' (passwords, cards, codes),
+   * 'money' (amounts, prices), 'files' (uploads). What it holds back is the viewer's turn. `values` still stand in.
+   */
+  security?: Security;
+  /**
+   * Perform mode: values to type, by a type step's `value` name or its field's label (any case), e.g.
+   * `{ password: 'demo-pass' }`. A trace never holds a recorded password; this is how a demo types one.
+   */
+  values?: Values;
   /**
    * Runs before the guide starts (from the beginning, or again after it ended), with the trace's
    * `meta.requires`. Check your session, sign into a sandbox, or return false / `{ ok: false, say }`
@@ -189,8 +208,11 @@ export function createTrace(opts: TraceOptions): TraceController {
     throw new TraceError("mode: 'perform' needs a performer: import { createTrace } from 'trace-avatar/perform', or pass performer: createPerformer from there.");
   }
   const hands: Performer | null = perform && doc && opts.performer ? opts.performer(doc) : null;
-  /** Perform mode's typing in progress: step i, n characters typed into field. */
-  let typing: { i: number; n: number; field: Element } | null = null;
+  /** Perform mode's typing in progress: step i, n characters of text typed into field. */
+  let typing: { i: number; n: number; field: Element; text: string; secret: boolean } | null = null;
+  /** The viewer's turn: the step, why, and the element they act in (for Enter / Tab / a file to carry on). */
+  let turn: { i: number; why: HandoffWhy; el: Element | null } | null = null;
+  let unchange: (() => void) | null = null;
   /** A start is waiting on onReset / prepare. */
   let starting = false;
   /** The guide has started at least once (a later start in perform mode resets the app first). */
@@ -217,6 +239,7 @@ export function createTrace(opts: TraceOptions): TraceController {
     else if (c === 'next') dispatch({ kind: 'next' });
     else if (c === 'prev') dispatch({ kind: 'prev' });
     else if (c === 'restart') restart();
+    else if (c === 'done') carryOn();
     else if (c === 'rate') {
       const k = RATES.indexOf(s.clock.rate);
       dispatch({ kind: 'rate', r: RATES[(k + 1) % RATES.length] });
@@ -238,6 +261,8 @@ export function createTrace(opts: TraceOptions): TraceController {
     const host = (renderer as { host?: Element }).host ?? null;
     const input = opts.ports?.input ?? (doc ? createInput(doc, () => host) : null);
     unwatch = input?.watch((e) => {
+      // The viewer's turn: Enter or Tab in the field means they're done (not a takeover).
+      if (e.type === 'keydown' && turnKey(e as KeyboardEvent)) return;
       if (opts.keyboard && e.type === 'keydown' && !isEditable(e.target) && s.phase !== 'idle') {
         const k = (e as KeyboardEvent).key;
         const cmd: Msg | null = k === ' ' || k === 'k' || k === 'K' ? { kind: 'toggle' } : k === 'ArrowRight' ? { kind: 'next' } : k === 'ArrowLeft' ? { kind: 'prev' } : null;
@@ -245,6 +270,7 @@ export function createTrace(opts: TraceOptions): TraceController {
       }
       if ((opts.takeover ?? 'pause') === 'pause') dispatch({ kind: 'takeover' });
     }) ?? null;
+    unchange = input?.changes?.((e) => turnChange(e)) ?? null;
     if (scrollMode === 'auto' && doc) unscroll = watchViewerScroll(doc, host, () => { viewerScrolled = true; });
     resume(trace);
     if (opts.startAt !== undefined && opts.startAt > 0 && opts.startAt < trace.steps.length) {
@@ -286,8 +312,11 @@ export function createTrace(opts: TraceOptions): TraceController {
           break;
         case 'handoff': {
           const el = page.element(f.i);
-          if (el && hands) hands.focus(el);
-          emitter.emit('handoff', { index: f.i, step: tr.steps[f.i], element: el });
+          const why = turnWhy(f.i);
+          const field = el ? (tr.steps[f.i].type === 'upload' ? hands?.fileInput?.(el) ?? el : fieldIn(el)) : null;
+          if (field && hands && why !== 'frame') hands.focus(field);
+          startTurn(f.i, why, field ?? el);
+          emitter.emit('handoff', { index: f.i, step: tr.steps[f.i], element: el, why });
           break;
         }
         case 'ripple':
@@ -334,6 +363,84 @@ export function createTrace(opts: TraceOptions): TraceController {
     else if (step.by) box?.scrollBy?.({ left: step.by.x ?? 0, top: step.by.y ?? 0, behavior });
   }
 
+  /** The field a step's element means: itself, or the one field inside it. */
+  function fieldIn(el: Element): Element {
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || (el as HTMLElement).isContentEditable) return el;
+    return el.querySelector?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])') ?? el;
+  }
+
+  /** Why step i is the viewer's to do, or null when the guide does it (security, values, what the page allows). */
+  function whyOf(i: number): HandoffWhy | null {
+    if (!tr) return null;
+    const step = tr.steps[i];
+    if (hands?.whyNot) return hands.whyNot(step, page.element(i), { security: opts.security, values: opts.values });
+    if (step.type === 'type' && step.mask) return 'masked';
+    if (step.type === 'upload' && !(hands?.upload && (step.files ?? []).some(hasSample))) return 'no-file';
+    return null;
+  }
+
+  /** Why a step handed over is the viewer's: as whyOf says, or (a file that couldn't be attached) no file. */
+  function turnWhy(i: number): HandoffWhy {
+    return whyOf(i) ?? (tr?.steps[i].type === 'upload' ? 'no-file' : 'masked');
+  }
+
+  /** The viewer's turn: carry on when they press Enter (one-line fields) or Tab in it, or choose a file or option. */
+  function startTurn(i: number, why: HandoffWhy, el: Element | null) {
+    turn = { i, why, el };
+  }
+  function endTurn() { turn = null; }
+  const inTurn = (t: EventTarget | null): boolean => {
+    const el = turn?.el;
+    return !!el && !!t && typeof (t as Node).nodeType === 'number' && (t === el || el.contains(t as Node));
+  };
+  /** A key in the turn's field: Tab, or Enter where it doesn't add a line, carries on. True when it did. */
+  function turnKey(e: KeyboardEvent): boolean {
+    if (!turn || !(s.phase === 'paused' && s.why === 'handoff') || e.isComposing || e.shiftKey || !inTurn(e.target)) return false;
+    if (e.key === 'Tab') { carryOn(); return true; }
+    if (e.key === 'Enter' && !isMultiline(e.target as Element)) {
+      // Enter here means "done": the guide does what comes next (a form isn't sent by it).
+      e.preventDefault();
+      carryOn();
+      return true;
+    }
+    return false;
+  }
+  /** A file or option chosen in the turn's field carries on. */
+  function turnChange(e: Event) {
+    if (!turn || !tr) return;
+    const t = e.target as HTMLInputElement;
+    const file = t?.tagName === 'INPUT' && t.type === 'file' && (t.files?.length ?? 0) > 0;
+    // A file chosen for an upload step counts wherever its input is (the step may point at its button).
+    if (file && tr.steps[turn.i].type === 'upload') { carryOn(); return; }
+    if (inTurn(t) && (t.tagName === 'SELECT' || file)) carryOn();
+  }
+  /** The viewer did their part: on with the guide. */
+  function carryOn() {
+    if (s.phase === 'paused' && s.why === 'handoff') dispatch({ kind: 'play' });
+  }
+
+  /** What the turn card says, knowing the field (one line or several, a menu, a file, a frame). */
+  function turnText(label: string): string {
+    if (!turn || !tr) return '';
+    const step = tr.steps[turn.i];
+    const el = turn.el;
+    if (turn.why === 'frame') return `Your turn: fill in “${label}”, then press Done.`;
+    if (step.type === 'upload') return `Your turn: choose a file for “${label}”.`;
+    if (step.type === 'type' && el?.tagName === 'SELECT') return `Your turn: choose in “${label}”.`;
+    if (step.type === 'type' && el && isMultiline(el)) return `Your turn: type in “${label}”, then press Tab.`;
+    return turnCaption(step.type, label);
+  }
+  /** The view, with the turn said exactly and a secret's typing shown as bullets. */
+  function dressed(v: View): View {
+    let out = v;
+    if (v.turn) {
+      if (!turn || turn.i !== v.turn.i) turn = { i: v.turn.i, why: turnWhy(v.turn.i), el: page.element(v.turn.i) };
+      out = { ...out, caption: { text: turnText(v.turn.label), key: v.caption?.key ?? -4 - v.turn.i } };
+    } else if (turn) endTurn();
+    if (typing?.secret && out.chip) out = { ...out, chip: '•'.repeat(Array.from(out.chip).length) };
+    return out;
+  }
+
   /** Perform mode: do a step's action. A failure is reported, never thrown into the frame loop. */
   function act(step: NStep, x?: number, y?: number) {
     if (!hands || !doc) return;
@@ -344,8 +451,17 @@ export function createTrace(opts: TraceOptions): TraceController {
       if (step.type === 'click' || step.type === 'dblclick') hands.click(el, x, y, step.type === 'dblclick');
       else if (step.type === 'hover') hands.hover(el, x, y);
       else if (step.type === 'type') {
-        typing = { i: step.i, n: 0, field: hands.startTyping(el) };
+        const field = hands.startTyping(el);
+        const text = hands.textFor ? hands.textFor(step, field, opts.values) : step.text ?? '';
+        typing = { i: step.i, n: 0, field, text, secret: !!hands.secret?.(field) || step.mask };
         keepTyping();
+      } else if (step.type === 'upload') {
+        if (!hands.upload) { dispatch({ kind: 'handoff', i: step.i }); return; }
+        hands.upload(el, step.files ?? []).catch((e) => {
+          emitter.emit('error', new TraceError(`perform step ${step.i} (upload) failed: ${(e as Error)?.message ?? e}`));
+          // Couldn't attach it: the viewer chooses the file.
+          dispatch({ kind: 'handoff', i: step.i });
+        });
       }
     } catch (e) {
       emitter.emit('error', new TraceError(`perform step ${step.i} (${step.type}) failed: ${(e as Error)?.message ?? e}`));
@@ -356,7 +472,7 @@ export function createTrace(opts: TraceOptions): TraceController {
   function keepTyping() {
     if (!typing || !tr || !hands) return;
     const step = tr.steps[typing.i];
-    const text = step.text ?? '';
+    const text = typing.text;
     const t = s.clock.elapsed;
     const span = step.end - step.at;
     const n = t >= step.end || span <= 0 || s.i > typing.i ? text.length : Math.min(text.length, Math.ceil(((t - step.at) / span) * text.length));
@@ -435,9 +551,9 @@ export function createTrace(opts: TraceOptions): TraceController {
     const at = where();
     const now = clock.now();
     const met = page.until?.(tr, now);
-    const [next, fx] = update(s, { kind: 'frame', now, look, vp: viewport, at, ...(met ? { met } : {}) }, tr, cfg);
+    const [next, fx] = update(s, { kind: 'frame', now, look, vp: viewport, at, ...(met ? { met } : {}), ...(perform ? { handoff: (i: number) => whyOf(i) !== null } : {}) }, tr, cfg);
     s = next;
-    const v: View = view(s, tr, look, cfg, at);
+    const v: View = dressed(view(s, tr, look, cfg, at));
     renderer.apply(v, viewport);
     run(fx);
     keepTyping();
@@ -505,7 +621,9 @@ export function createTrace(opts: TraceOptions): TraceController {
       if (raf) clock.caf(raf);
       raf = 0;
       unwatch?.();
+      unchange?.();
       unscroll?.();
+      endTurn();
       renderer?.destroy();
       page.clear();
       emitter.clear();

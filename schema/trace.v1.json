@@ -62,7 +62,7 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "enum": ["move", "click", "dblclick", "type", "key", "scroll", "hover", "wait", "note"] },
+        "type": { "enum": ["move", "click", "dblclick", "type", "upload", "key", "scroll", "hover", "wait", "note"] },
         "t": { "type": "number", "minimum": 0 },
         "target": { "$ref": "#/$defs/target" },
         "say": { "type": "string", "maxLength": 500 },
@@ -82,16 +82,34 @@
         "page": { "type": "string", "pattern": "^/", "maxLength": 300, "description": "The page this step happens on; * matches one path segment. Applies to later steps until another names a page." },
         "text": { "type": "string", "maxLength": 2000 },
         "mask": { "type": "boolean" },
+        "value": { "type": "string", "minLength": 1, "maxLength": 100, "description": "type: the name of a value the host passes at play time (values: { name: text }), typed instead of text" },
+        "files": {
+          "description": "upload: the files to pick. url or text makes a sample Do it for me attaches; without, the viewer chooses",
+          "type": "array", "minItems": 1, "maxItems": 10,
+          "items": {
+            "type": "object", "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "type": { "type": "string", "maxLength": 255 },
+              "size": { "type": "number", "minimum": 0 },
+              "url": { "type": "string", "maxLength": 1500000, "description": "https:, a relative URL, or a data: URL" },
+              "text": { "type": "string", "maxLength": 200000 }
+            },
+            "not": { "required": ["url", "text"] }
+          }
+        },
         "keys": { "type": "string", "minLength": 1 },
         "to": { "$ref": "#/$defs/xy" },
         "by": { "$ref": "#/$defs/xy" }
       },
       "allOf": [
-        { "if": { "properties": { "type": { "enum": ["move", "click", "dblclick", "type", "hover"] } } }, "then": { "required": ["target"] } },
+        { "if": { "properties": { "type": { "enum": ["move", "click", "dblclick", "type", "upload", "hover"] } } }, "then": { "required": ["target"] } },
         { "if": { "properties": { "type": { "const": "wait" } } }, "then": { "anyOf": [{ "required": ["target"] }, { "required": ["until"], "properties": { "until": { "required": ["text"] } } }] } },
         { "if": { "properties": { "type": { "not": { "const": "wait" } } } }, "then": { "not": { "required": ["until"] } } },
         { "if": { "required": ["until"], "properties": { "until": { "required": ["gone"] } } }, "then": { "required": ["target"] } },
         { "if": { "properties": { "type": { "const": "type" } } }, "then": { "required": ["text"] } },
+        { "if": { "properties": { "type": { "const": "upload" } } }, "then": { "required": ["files"] }, "else": { "not": { "required": ["files"] } } },
+        { "if": { "properties": { "type": { "not": { "const": "type" } } } }, "then": { "not": { "required": ["value"] } } },
         { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["keys"] } },
         { "if": { "properties": { "type": { "const": "note" } } }, "then": { "required": ["say"], "properties": { "say": { "minLength": 1 } } } },
         { "if": { "properties": { "type": { "const": "scroll" } } }, "then": { "anyOf": [{ "required": ["to"] }, { "required": ["by"] }] } }

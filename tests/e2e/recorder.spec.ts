@@ -3,12 +3,12 @@ import type { Page } from '@playwright/test';
 
 const APP = '/tests/e2e/fixtures/app.html';
 
-async function record(page: Page, act: () => Promise<void>) {
+async function record(page: Page, act: () => Promise<void>, o: Record<string, unknown> = {}) {
   await page.addScriptTag({ url: '/dist/trace-record.min.js' });
-  await page.evaluate(() => {
-    (window as any).rec = (window as any).TraceAvatarRecord.createRecorder({ title: 'e2e' });
+  await page.evaluate((opts) => {
+    (window as any).rec = (window as any).TraceAvatarRecord.createRecorder({ title: 'e2e', ...opts });
     (window as any).rec.start();
-  });
+  }, o);
   await act();
   return page.evaluate(() => (window as any).rec.stop());
 }
@@ -47,21 +47,27 @@ test('records real input into a valid trace that replays onto the same elements'
   expect(log.map((e: { by: string }) => e.by)).toEqual(['sel', 'sel', 'sel', null, 'sel', 'sel', 'sel']);
 });
 
-test('masks typed text by default and passwords always', async ({ page }) => {
+test('keeps typed text by default, passwords never; with security on, masks typed text too', async ({ page }) => {
   await page.goto(APP);
   await page.evaluate(() => {
     document.querySelector('main section')!.insertAdjacentHTML('beforeend', '<input id="pw" type="password" data-trace-reveal>');
   });
-  const trace = await record(page, async () => {
-    await page.fill('#customer', '');
+  const typing = async () => {
     await page.click('#customer');
     await page.keyboard.type('secret co');
     await page.click('#pw');
     await page.keyboard.type('hunter2');
-  });
-  expect(trace.steps.filter((s: { type: string }) => s.type === 'type').map((s: { text: string; mask: boolean }) => [s.text, s.mask]))
-    .toEqual([['•••••••••', true], ['•••••••', true]]);
-  expect(JSON.stringify(trace)).not.toMatch(/secret co|hunter2/);
+  };
+  const typed = (tr: any) => tr.steps.filter((s: { type: string }) => s.type === 'type').map((s: { text: string; mask?: boolean }) => [s.text, !!s.mask]);
+  await page.fill('#customer', '');
+  const plain = await record(page, typing);
+  expect(typed(plain)).toEqual([['secret co', false], ['•••••••', true]]);
+  expect(JSON.stringify(plain)).not.toMatch(/hunter2/);
+  await page.fill('#customer', '');
+  await page.fill('#pw', '');
+  const secure = await record(page, typing, { security: true });
+  expect(typed(secure)).toEqual([['•••••••••', true], ['•••••••', true]]);
+  expect(JSON.stringify(secure)).not.toMatch(/secret co|hunter2/);
 });
 
 test('ignores the overlay and [data-trace-ignore] while recording', async ({ page }) => {

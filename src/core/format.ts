@@ -7,9 +7,26 @@
  * PURE: no DOM, no clock, no randomness.
  */
 
-export type StepType = 'move' | 'click' | 'dblclick' | 'type' | 'key' | 'scroll' | 'hover' | 'wait' | 'note';
+export type StepType = 'move' | 'click' | 'dblclick' | 'type' | 'upload' | 'key' | 'scroll' | 'hover' | 'wait' | 'note';
 
-export const STEP_TYPES: readonly StepType[] = ['move', 'click', 'dblclick', 'type', 'key', 'scroll', 'hover', 'wait', 'note'];
+export const STEP_TYPES: readonly StepType[] = ['move', 'click', 'dblclick', 'type', 'upload', 'key', 'scroll', 'hover', 'wait', 'note'];
+
+/**
+ * A file an `upload` step picks. Recorded: its name, type and size, and (unless security keeps files out)
+ * its content as a data: URL when small. `url` or `text` makes it a sample perform mode can attach; a file
+ * with neither is chosen by the viewer.
+ */
+export interface FileSpec {
+  name: string;
+  /** Its media type, e.g. "text/csv". */
+  type?: string;
+  /** Its size in bytes, as recorded. */
+  size?: number;
+  /** Where its content is: https:, a relative URL, or a data: URL. */
+  url?: string;
+  /** Its content as text (a small CSV, a note). */
+  text?: string;
+}
 
 export interface Point { x: number; y: number }
 
@@ -38,6 +55,13 @@ export interface Step {
   /** `type` */
   text?: string;
   mask?: boolean;
+  /**
+   * `type`: the name of a value the host passes when the guide plays (`values: { password: '…' }`), typed
+   * instead of `text`. Without it, a value is looked up by the field's label.
+   */
+  value?: string;
+  /** `upload`: the files to pick. */
+  files?: FileSpec[];
   /** `key`, e.g. "Mod+Enter" */
   keys?: string;
   /** `scroll` */
@@ -105,6 +129,10 @@ export interface NStep {
   readonly pause: boolean;
   readonly text: string | null;
   readonly mask: boolean;
+  /** `type`: the run-time value's name (see Step.value). */
+  readonly value: string | null;
+  /** `upload`: the files to pick. */
+  readonly files: readonly FileSpec[] | null;
   readonly keys: string | null;
   readonly to: { x?: number; y?: number } | null;
   readonly by: { x?: number; y?: number } | null;
@@ -133,14 +161,14 @@ export interface NormalisedTrace {
 export interface ValidationError { path: string; message: string }
 export type ParseResult = { ok: true; trace: NormalisedTrace } | { ok: false; errors: ValidationError[] };
 
-export const LIMITS = { steps: 10_000, pathSamples: 200_000, say: 500, text: 2_000, string: 1_000, timeout: 600_000, requires: 10 } as const;
+export const LIMITS = { steps: 10_000, pathSamples: 200_000, say: 500, text: 2_000, string: 1_000, timeout: 600_000, requires: 10, files: 10, fileUrl: 1_500_000, fileText: 200_000 } as const;
 
 /** Timing constants (ms). */
 export const TIMING = {
   travelMax: 800,
   travelDefault: 700,
   gap: 150,
-  act: { move: 0, click: 250, dblclick: 450, key: 600, scroll: 700, wait: 0 } as Record<string, number>,
+  act: { move: 0, click: 250, dblclick: 450, upload: 600, key: 600, scroll: 700, wait: 0 } as Record<string, number>,
   typePerChar: 55,
   typeMin: 400,
   typeMax: 3000,
@@ -158,11 +186,17 @@ export const TIMING = {
 const UPCASTERS: Record<number, (t: any) => any> = {};
 const CURRENT = 1;
 
-const NEEDS_TARGET: ReadonlySet<StepType> = new Set(['move', 'click', 'dblclick', 'type', 'hover', 'wait']);
+const NEEDS_TARGET: ReadonlySet<StepType> = new Set(['move', 'click', 'dblclick', 'type', 'upload', 'hover', 'wait']);
 
 const isObj = (v: unknown): v is Record<string, any> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** A sample file's URL: https:, http:, data: (any type: it is only read into a File) or relative. */
+function checkFileUrl(u: string): boolean {
+  if (/^(https?:|data:)/i.test(u)) return true;
+  return !/^[a-z][a-z0-9+.-]*:/i.test(u);
+}
 
 function checkUrl(u: string): boolean {
   if (/^(https?:|data:image\/)/i.test(u)) return true;
@@ -238,6 +272,25 @@ export function validate(raw: unknown): { ok: boolean; errors: ValidationError[]
       if (s.type === 'type') {
         if (typeof s.text !== 'string') err(`${p}.text`, 'a type step needs text');
         else str(s.text, `${p}.text`, LIMITS.text);
+      }
+      if (s.value !== undefined) {
+        if (s.type !== 'type') err(`${p}.value`, 'only a type step has value');
+        else if (!(typeof s.value === 'string' && s.value.trim() && s.value.length <= 100)) err(`${p}.value`, 'must be a name (1–100 characters)');
+      }
+      if (s.files !== undefined && s.type !== 'upload') err(`${p}.files`, 'only an upload step has files');
+      if (s.type === 'upload') {
+        const f = s.files;
+        if (!Array.isArray(f) || f.length === 0 || f.length > LIMITS.files) err(`${p}.files`, `an upload step needs 1–${LIMITS.files} files`);
+        else f.forEach((file: unknown, k: number) => {
+          const q = `${p}.files[${k}]`;
+          if (!isObj(file)) { err(q, 'must be an object'); return; }
+          if (!(typeof file.name === 'string' && file.name.trim() && file.name.length <= 255)) err(`${q}.name`, 'must be a file name (1–255 characters)');
+          str(file.type, `${q}.type`, 255);
+          if (file.size !== undefined && !(isNum(file.size) && file.size >= 0)) err(`${q}.size`, 'must be a number ≥ 0');
+          if (file.url !== undefined && !(typeof file.url === 'string' && file.url.length <= LIMITS.fileUrl && checkFileUrl(file.url))) err(`${q}.url`, 'must be an https:, data: or relative URL');
+          str(file.text, `${q}.text`, LIMITS.fileText);
+          if (file.url !== undefined && file.text !== undefined) err(q, 'has url or text, not both');
+        });
       }
       if (s.type === 'key' && (typeof s.keys !== 'string' || !s.keys)) err(`${p}.keys`, 'a key step needs keys, e.g. "Mod+Enter"');
       if (s.type === 'note' && (typeof s.say !== 'string' || !s.say)) err(`${p}.say`, 'a note step needs say');
@@ -332,10 +385,12 @@ export function parse(raw: unknown): ParseResult {
       say: s.say ?? null,
       capFrom: 0,
       capTo: 0,
-      highlight: s.highlight ?? (s.type === 'click' || s.type === 'dblclick' || s.type === 'type' || s.type === 'hover'),
+      highlight: s.highlight ?? (s.type === 'click' || s.type === 'dblclick' || s.type === 'type' || s.type === 'upload' || s.type === 'hover'),
       pause: !!s.pause,
       text: s.type === 'type' ? (s.text ?? '') : null,
       mask: !!s.mask,
+      value: s.type === 'type' ? (s.value ?? null) : null,
+      files: s.type === 'upload' ? (s.files ?? []) : null,
       keys: s.type === 'key' ? (s.keys ?? null) : null,
       to: s.type === 'scroll' ? (s.to ?? null) : null,
       by: s.type === 'scroll' ? (s.by ?? null) : null,
@@ -418,6 +473,9 @@ export function pageMatches(pattern: string, path: string): boolean {
 function safeDecode(s: string): string {
   try { return decodeURIComponent(s); } catch { return s; }
 }
+
+/** Whether a file can be attached without the viewer: it carries its content. */
+export const hasSample = (f: FileSpec): boolean => f.url !== undefined || f.text !== undefined;
 
 /** A short human label for a target, used in "Looking for …" captions. */
 export function labelOf(t: Target | null): string {

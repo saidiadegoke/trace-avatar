@@ -5,8 +5,9 @@
  *   stop(): coalesce → simplify path → build → validate
  *
  * Only trusted events count (real input), and never anything inside the
- * overlay or under [data-trace-ignore]. Typed text is masked by default; a
- * demo author marks fields [data-trace-reveal] to keep their text.
+ * overlay or under [data-trace-ignore]. Typed text is kept, except passwords, card numbers and codes
+ * (always masked); with `security` on, everything is masked unless a field is marked [data-trace-reveal].
+ * A chosen file is kept as its name, type and size, and its content when small (not under the 'files' guard).
  */
 
 import { build, hintsOf } from '../core/build';
@@ -14,7 +15,9 @@ import type { Draft, ScrollMode } from '../core/build';
 import { parse } from '../core/format';
 import type { Avatar, Trace, Until } from '../core/format';
 import { isSecret, maskText, shouldMask } from '../core/mask';
-import type { FieldFacts } from '../core/mask';
+import { guardsOf } from '../core/security';
+import type { Security } from '../core/security';
+import type { FileSpec } from '../core/format';
 import { next, recClock, recElapsed, recPause, recResume } from '../core/recorder-state';
 import { REC_PERSIST_MS, SIGN_IN_NOTE, cameFromElsewhere, clockAt, resumeElapsed, savedOk, trimPath } from '../core/rec-store';
 import type { SavedRecording } from '../core/rec-store';
@@ -22,13 +25,21 @@ import type { RecClock, RecorderAction, RecorderState } from '../core/recorder-s
 import { ring } from '../core/ring';
 import { createEmitter } from './emitter';
 import { buildTarget, meaningful, pagePattern } from './selector.dom';
+import { factsOf } from './field.dom';
 
 export interface RecorderOptions {
   /** Where targets are described relative to. Default: document. */
   root?: ParentNode;
   doc?: Document;
-  /** Mask typed text unless a field is marked [data-trace-reveal]. Default true. */
+  /** Mask typed text unless a field is marked [data-trace-reveal]. Default: false, or true with `security` on. */
   maskByDefault?: boolean;
+  /**
+   * What is held back (see core/security): with any guard on, typed text is masked by default; 'money' masks
+   * amount and price fields; 'files' keeps no file content. Passwords, cards and codes are always masked.
+   */
+  security?: Security;
+  /** A chosen file up to this size (bytes) is kept in the trace as a data: URL. Default 256 KB; 0 keeps none. */
+  keepFileBytes?: number;
   /** Pointer sampling interval (ms). Default 33 (~30 Hz). */
   sampleMs?: number;
   /** Pointer samples kept; the oldest are dropped beyond this. Default 108 000 (an hour at 30 Hz). */
@@ -112,18 +123,8 @@ export function comboOf(e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | '
   return parts.join('+');
 }
 
-/** Facts about a field for the mask rule. Exported for tests. */
-export function factsOf(el: Element): FieldFacts {
-  return {
-    tag: el.tagName.toLowerCase(),
-    type: (el.getAttribute('type') || '').toLowerCase(),
-    autocomplete: el.getAttribute('autocomplete') || '',
-    name: el.getAttribute('name') || '',
-    id: el.id || '',
-    marked: !!el.closest('[data-trace-mask]'),
-    revealed: !!el.closest('[data-trace-reveal]'),
-  };
-}
+/** Facts about a field for the mask rule (shell/field.dom). Exported for tests. */
+export { factsOf };
 
 export function createRecorder(opts: RecorderOptions = {}): Recorder {
   const doc = opts.doc ?? document;
@@ -151,6 +152,10 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   const ids = new WeakMap<object, string>();
   const marks = new WeakMap<Element, 'mask' | 'reveal'>();
+  const guards = guardsOf(opts.security);
+  const maskDefault = opts.maskByDefault ?? guards.size > 0;
+  const masks = (el: Element) => shouldMask(factsFor(el), maskDefault, guards.has('money'));
+  const keepBytes = guards.has('files') ? 0 : opts.keepFileBytes ?? 256 * 1024;
   const factsFor = (el: Element) => {
     const f = factsOf(el);
     const m = marks.get(el);
@@ -172,7 +177,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
   let mo: MutationObserver | null = null;
   const skipSel = `${ignoreSel}, input, textarea, select, [contenteditable], [data-trace-blur], [data-trace-mask], script, style, noscript, template`;
   const maskedValues = (): string[] => Array.from(doc.querySelectorAll('input, textarea'))
-    .filter((el) => shouldMask(factsFor(el), opts.maskByDefault ?? true))
+    .filter((el) => masks(el))
     .map((el) => (el as HTMLInputElement).value)
     .filter((v) => v && v.length >= 3);
   const unwatch = () => { mo?.disconnect(); mo = null; watching = null; };
@@ -274,8 +279,37 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
     } else if (el.isContentEditable) value = el.textContent ?? '';
     else return;
     const facts = factsFor(el);
-    const masked = el instanceof win.HTMLSelectElement ? isSecret(facts) : shouldMask(facts, opts.maskByDefault ?? true);
+    const masked = el instanceof win.HTMLSelectElement ? isSecret(facts) : masks(el);
     add({ kind: 'type', t: t(), key: keyOf(el), target: buildTarget(el, { root }), text: masked ? maskText(value) : value, ...(masked ? { mask: true } : {}) });
+  };
+  /** A file chosen: an upload step, on the input, or on what opened its picker when the input is hidden. */
+  const onFiles = (e: Event) => {
+    if (state !== 'recording' || ignored(e)) return;
+    const input = e.target as HTMLInputElement;
+    const chosen = Array.from(input.files ?? []).slice(0, 10);
+    if (!chosen.length) return;
+    const time = t();
+    const hidden = typeof input.getClientRects === 'function' && input.getClientRects().length === 0;
+    // The click that opened the picker (a button beside a hidden input) becomes this step.
+    const last = drafts[drafts.length - 1];
+    const opener = hidden && last && last.kind === 'click' && time - last.t < 120_000 ? last : null;
+    const target = opener?.target ?? buildTarget(input, { root });
+    const key = opener?.key ?? keyOf(input);
+    const read = (f: File): Promise<FileSpec> => {
+      const spec: FileSpec = { name: f.name.slice(0, 255), ...(f.type ? { type: f.type } : {}), size: f.size };
+      if (!(f.size <= keepBytes) || typeof win.FileReader !== 'function') return Promise.resolve(spec);
+      return new Promise((done) => {
+        const r = new win.FileReader();
+        r.onload = () => done(typeof r.result === 'string' ? { ...spec, url: r.result } : spec);
+        r.onerror = () => done(spec);
+        r.readAsDataURL(f);
+      });
+    };
+    void Promise.all(chosen.map(read)).then((files) => {
+      if (state !== 'recording' && state !== 'paused') return;
+      if (opener) { const k = drafts.lastIndexOf(opener); if (k >= 0) drafts.splice(k, 1); }
+      add({ kind: 'upload', t: opener?.t ?? time, key, target, files });
+    });
   };
   const onKey = (e: KeyboardEvent) => {
     if (state !== 'recording' || ignored(e)) return;
@@ -301,7 +335,10 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
     ['click', onClick('click') as EventListener],
     ['dblclick', onClick('dblclick') as EventListener],
     ['input', onInput],
-    ['change', ((e: Event) => { if (e.target instanceof win.HTMLSelectElement) onInput(e); }) as EventListener],
+    ['change', ((e: Event) => {
+      if (e.target instanceof win.HTMLSelectElement) onInput(e);
+      else if (e.target instanceof win.HTMLInputElement && e.target.type === 'file') onFiles(e);
+    }) as EventListener],
     ['keydown', onKey as EventListener],
     ['scroll', onScroll],
   ];
@@ -411,7 +448,7 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
     },
     mark(el, how) {
       if (how) marks.set(el, how); else marks.delete(el);
-      return shouldMask(factsFor(el), opts.maskByDefault ?? true);
+      return masks(el);
     },
     on: (ev, fn) => emitter.on(ev, fn),
     destroy(o) {

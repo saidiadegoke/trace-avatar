@@ -21,6 +21,7 @@
     aside h1 { font-size: 16px; margin: 0; }
     textarea { width: 100%; min-height: 280px; font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: Canvas; color: CanvasText; resize: vertical; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
     #sent { min-height: 1.5em; color: #1b7f3b; font-weight: 600; margin: 0; }
     select { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: Canvas; color: CanvasText; }
     #status { font-size: 13px; min-height: 1.5em; white-space: pre-wrap; }
@@ -49,6 +50,7 @@
         <option value="overlay">Show me</option>
         <option value="perform">Do it for me</option>
       </select>
+      <label class="chk" title="Off: Do it for me types everything it knows. On: passwords, amounts and files are left to you, and recording masks what you type (except Customer)"><input type="checkbox" id="security"> Security</label>
       <button id="play">Play</button>
       <button id="check" class="ghost">Check</button>
       <button id="reset" class="ghost">Reset sample</button>
@@ -111,27 +113,39 @@
       window.pg.steps = [];
       const mode = document.getElementById('mode').value;
       if (mode === 'perform') window.clearForm();
-      current = TraceAvatar.createTrace({ trace: raw, controls: true, autoplay: true, mode, onReset: window.clearForm });
-      current.on('handoff', (e) => say(`Step ${e.index + 1}: your turn. Type in the highlighted field (it was masked when recorded), then press play.`));
+      current = TraceAvatar.createTrace({ trace: raw, controls: true, autoplay: true, mode, onReset: window.clearForm, security: secure() });
+      current.on('handoff', (e) => say(`Step ${e.index + 1}: your turn (${e.why}). Do it in the highlighted field, then press Enter, Tab or Done.`));
       current.on('step', (e) => { window.pg.steps.push(e.index); say(`Step ${e.index + 1} of ${current.trace.steps.length} (${e.step.type}${e.resolvedBy ? `, found by ${e.resolvedBy}` : ''})`); });
       current.on('stalled', (e) => say(`Step ${e.index + 1}: element not found (${e.reason}).`, true));
       current.on('end', () => say('Finished.'));
     });
     // Recording happens in the studio: use the app on the left, add captions and waits from its toolbar,
-    // then Stop to review the steps and test them. Save puts the guide in the editor here. Text typed into
-    // Customer is kept (data-trace-reveal); other fields are masked. The editor panel is ignored.
-    const studio = TraceAvatarStudio.createStudio({
-      avatar: { name: 'You' },
-      onReset: window.clearForm,
-      save: (trace) => {
-        box.value = JSON.stringify(trace, null, 2);
-        say(`Saved ${trace.steps.length} steps to the editor. Close the studio (✕), then Play.`);
-      },
-    });
+    // then Stop to review the steps and test them. Save puts the guide in the editor here. What you type is
+    // kept (passwords never are); with Security on, it is masked except Customer (data-trace-reveal), and the
+    // amount always. The editor panel is ignored.
+    const secure = () => document.getElementById('security').checked;
+    let studio = null;
+    let studioSecure = null;
+    const makeStudio = () => {
+      if (studio && studioSecure === secure()) return studio;
+      studio?.destroy();
+      studioSecure = secure();
+      studio = TraceAvatarStudio.createStudio({
+        avatar: { name: 'You' },
+        onReset: window.clearForm,
+        security: studioSecure,
+        save: (trace) => {
+          box.value = JSON.stringify(trace, null, 2);
+          say(`Saved ${trace.steps.length} steps to the editor. Close the studio (✕), then Play.`);
+        },
+      });
+      return studio;
+    };
+    makeStudio();
     window.pg.studio = () => studio;
     document.getElementById('record').addEventListener('click', () => {
       current?.destroy();
-      studio.start();
+      makeStudio().start();
       say('Recording… use the app, then press Stop in the studio bar.');
     });
     document.getElementById('download').addEventListener('click', () => {
@@ -156,7 +170,7 @@
       current?.destroy();
       const mode = document.getElementById('mode').value;
       window.clearForm();   // the recording starts from step 1, so the app starts fresh too (in Show me as well)
-      current = TraceAvatar.createTrace({ trace: raw, controls: false, autoplay: false, mode, onReset: window.clearForm });
+      current = TraceAvatar.createTrace({ trace: raw, controls: false, autoplay: false, mode, onReset: window.clearForm, security: secure() });
       button.disabled = true;
       try {
         const v = await TraceAvatarExport.saveVideo(current, {

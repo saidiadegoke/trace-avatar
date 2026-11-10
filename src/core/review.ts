@@ -47,7 +47,7 @@ export function removeStep(steps: readonly Step[], i: number): Step[] {
 
 const VERB: Record<string, string> = {
   click: 'Click', dblclick: 'Double-click', type: 'Type in', key: 'Press', scroll: 'Scroll',
-  hover: 'Point at', move: 'Move to', wait: 'Wait', note: 'Note',
+  hover: 'Point at', move: 'Move to', wait: 'Wait', note: 'Note', upload: 'Upload to',
 };
 
 const cut = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);

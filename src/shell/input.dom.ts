@@ -21,6 +21,13 @@ export function createInput(doc: Document, host: () => Element | null): InputPor
         doc.removeEventListener('keydown', handler, true);
       };
     },
+    changes(cb) {
+      // Any change counts, trusted or not: a file is often set by a library or a test tool (never by the
+      // guide during the viewer's turn, the only time this is listened to).
+      const handler = (e: Event) => { const h = host(); if (!(h && e.composedPath().includes(h))) cb(e); };
+      doc.addEventListener('change', handler, true);
+      return () => doc.removeEventListener('change', handler, true);
+    },
   };
 }
 

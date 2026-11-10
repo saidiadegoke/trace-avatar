@@ -41,6 +41,8 @@ export interface RendererPort {
 export interface InputPort {
   /** Real (trusted) pointer or key input from the viewer, outside the overlay. Returns unsubscribe. */
   watch(cb: (e: PointerEvent | KeyboardEvent) => void): () => void;
+  /** `change` events outside the overlay (a file or option chosen), trusted or not. Optional. Returns unsubscribe. */
+  changes?(cb: (e: Event) => void): () => void;
 }
 
 /** Finds an element for a target, or null. Hosts may add their own in front of the defaults. */

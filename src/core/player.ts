@@ -14,12 +14,12 @@
 
 import * as C from './clock';
 import type { Clock } from './clock';
-import { labelOf, lastAtOrBefore, pageMatches, stepAt } from './format';
+import { hasSample, labelOf, lastAtOrBefore, pageMatches, stepAt } from './format';
 import type { NStep, NormalisedTrace, Point } from './format';
 import { curvePoint, samplePath } from './motion';
 
 export type Phase = 'idle' | 'playing' | 'paused' | 'waiting' | 'ended';
-/** 'handoff': perform mode reached a masked field; the viewer types it, then presses play. */
+/** 'handoff': perform mode reached a step it can't or may not do; the viewer does it, then carries on (Enter, Tab, a file, Done). */
 export type PauseReason = 'user' | 'takeover' | 'pause-step' | 'handoff';
 export type ResolvedBy = 'sel' | 'role' | 'text' | 'xy';
 
@@ -79,13 +79,17 @@ export type Msg =
   | { kind: 'prev' }
   | { kind: 'rate'; r: number }
   | { kind: 'takeover' }
+  /** Perform mode: step i turned out to be the viewer's (a file that couldn't be attached): their turn, there. */
+  | { kind: 'handoff'; i: number }
   /** Go to step i with it still to play (resume after a page load). From idle, lands paused there. */
   | { kind: 'jump'; i: number }
   /**
    * `at`: the page the viewer is on (location.pathname); left out, every page matches.
    * `met`: whether step i's `until` holds now; left out, it always does.
+   * `handoff`: perform mode, whether step i is the viewer's to do; left out, a masked type step and an upload
+   * without a sample file are.
    */
-  | { kind: 'frame'; now: number; look: LookFn; vp: Viewport; at?: string; met?: (i: number) => boolean };
+  | { kind: 'frame'; now: number; look: LookFn; vp: Viewport; at?: string; met?: (i: number) => boolean; handoff?: (i: number) => boolean };
 
 export type Effect =
   | { fx: 'step'; i: number; by: ResolvedBy | null }
@@ -95,14 +99,19 @@ export type Effect =
   | { fx: 'stalled'; i: number; reason: 'not-found' | 'wait-timeout' | 'until-timeout' }
   /** Perform mode: do step i's action on the page, at (x, y) when the step aims at a point. */
   | { fx: 'act'; i: number; x?: number; y?: number }
-  /** Perform mode: step i types into a masked field; the viewer does it. */
+  /** Perform mode: step i is the viewer's to do (a masked field, a file to choose, a frame). */
   | { fx: 'handoff'; i: number }
   /** Step i happens on another page: the shell tells the host, and navigates when it may. */
   | { fx: 'page'; i: number; want: string }
   | { fx: 'end' };
 
+/** Perform mode handed a step to the viewer: what to do, where. */
+export interface Turn { i: number; type: NStep['type']; label: string }
+
 export interface View {
   phase: Phase;
+  /** The viewer's turn (perform mode), shown as a card with a Done button. */
+  turn?: Turn | null;
   cursor: { x: number; y: number; pressed: boolean; visible: boolean };
   ring: { x: number; y: number; w: number; h: number } | null;
   /** `key` changes whenever the caption is a different one, so screen readers re-announce. */
@@ -165,6 +174,12 @@ export function update(s: PlayerState, m: Msg, tr: NormalisedTrace, cfg: Config)
       return s.phase === 'playing' || s.phase === 'waiting' ? [paused(common(s), 'user'), NONE] : [s, NONE];
     case 'toggle':
       return update(s, { kind: s.phase === 'playing' || s.phase === 'waiting' ? 'pause' : 'play' }, tr, cfg);
+    case 'handoff': {
+      if (s.phase !== 'playing' && s.phase !== 'waiting') return [s, NONE];
+      if (m.i < 0 || m.i >= tr.steps.length || m.i > s.fired) return [s, NONE];
+      const at: Common = { ...common(s), i: m.i, clock: C.seek(s.clock, tr.at[m.i]), leg: { i: m.i, from: s.pos, t0: tr.at[m.i] } };
+      return [paused(at, 'handoff'), [{ fx: 'handoff', i: m.i }]];
+    }
     case 'takeover':
       return s.phase === 'playing' || s.phase === 'waiting' ? [paused(common(s), 'takeover'), NONE] : [s, NONE];
     case 'stop':
@@ -330,8 +345,8 @@ function advance(s: PlayerState, m: Extract<Msg, { kind: 'frame' }>, tr: Normali
       if ((st.type === 'click' || st.type === 'dblclick') && p) fx.push({ fx: 'ripple', x: p.x, y: p.y });
       if (st.type === 'scroll') fx.push({ fx: 'scroll', i });
       if (cfg.perform && ACTS.has(st.type)) {
-        // A trace never knows a masked field's text: the viewer types it.
-        if (st.type === 'type' && st.mask) {
+        // What the guide can't or may not do (a masked field, a file to choose): the viewer does it.
+        if (m.handoff ? m.handoff(i) : defaultHandoff(st)) {
           fx.push({ fx: 'handoff', i });
           t = st.at;
           return paused(build(), 'handoff');
@@ -384,7 +399,17 @@ function waitFrame(s: Extract<PlayerState, { phase: 'waiting' }>, m: Extract<Msg
 }
 
 /** Steps perform mode acts out (scroll has its own effect in both modes). */
-const ACTS: ReadonlySet<string> = new Set(['click', 'dblclick', 'type', 'key', 'hover']);
+const ACTS: ReadonlySet<string> = new Set(['click', 'dblclick', 'type', 'upload', 'key', 'hover']);
+
+/** Without the shell's say: a trace never knows a masked field's text, nor a file it doesn't carry. */
+const defaultHandoff = (st: NStep): boolean => (st.type === 'type' && st.mask) || (st.type === 'upload' && !(st.files ?? []).some(hasSample));
+
+/** What the viewer is asked to do at a hand-off. The shell may say it more exactly (it knows the field). */
+export function turnCaption(type: NStep['type'], label: string): string {
+  if (type === 'upload') return `Your turn: choose a file for “${label}”.`;
+  if (type === 'type') return `Your turn: type in “${label}”, then press Enter.`;
+  return `Your turn: do “${label}”, then press Done.`;
+}
 
 const scratch: Point = { x: 0, y: 0 };
 const scratch2: Point = { x: 0, y: 0 };
@@ -489,7 +514,7 @@ export function formatKeys(keys: string, mac: boolean): string {
 export function view(s: PlayerState, tr: NormalisedTrace, rawLook: LookFn, cfg: Config, at?: string): View {
   const look = gate(rawLook, tr, s.gaveUp, at);
   const count = tr.steps.length;
-  const hidden: View = { phase: s.phase, cursor: { x: 0, y: 0, pressed: false, visible: false }, ring: null, caption: null, chip: null, index: s.i, count };
+  const hidden: View = { phase: s.phase, turn: null, cursor: { x: 0, y: 0, pressed: false, visible: false }, ring: null, caption: null, chip: null, index: s.i, count };
   // On the wrong page the caption says where to go, even before the cursor has appeared.
   if (s.phase === 'waiting' && s.for === 'page') {
     const want = tr.steps[s.i].page!.replace(/\/\*(?=\/|$)/g, '/…');
@@ -504,7 +529,7 @@ export function view(s: PlayerState, tr: NormalisedTrace, rawLook: LookFn, cfg: 
     const u = step.until!;
     caption = { text: step.say ?? (u.gone ? `Waiting for “${labelOf(step.target)}” to go away…` : `Waiting for “${u.text}”…`), key: -3 - s.i };
   } else if (s.phase === 'waiting') caption = { text: `Looking for “${labelOf(step.target)}”…`, key: -2 - s.i };
-  else if (s.phase === 'paused' && s.why === 'handoff') caption = { text: `Your turn: type in “${labelOf(step.target)}”, then press play.`, key: -4 - s.i };
+  else if (s.phase === 'paused' && s.why === 'handoff') caption = { text: turnCaption(step.type, labelOf(step.target)), key: -4 - s.i };
   else if (s.phase === 'paused' && s.why === 'takeover' && cfg.resumeHint) caption = { text: 'Your turn. Press play to resume the guide.', key: -1 };
   else {
     for (let j = s.i; j >= 0 && j >= s.i - 8; j -= 1) {
@@ -532,6 +557,7 @@ export function view(s: PlayerState, tr: NormalisedTrace, rawLook: LookFn, cfg: 
 
   return {
     phase: s.phase,
+    turn: s.phase === 'paused' && s.why === 'handoff' ? { i: s.i, type: step.type, label: labelOf(step.target) } : null,
     cursor: { x: s.pos.x, y: s.pos.y, pressed: s.pressed, visible: true },
     ring,
     caption,

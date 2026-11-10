@@ -12,7 +12,7 @@ import type { View, Viewport } from '../core/player';
 import type { RendererPort } from './ports';
 
 export type CaptionMode = 'bubble' | 'bar' | 'none';
-export type Command = 'toggle' | 'next' | 'prev' | 'restart' | 'rate';
+export type Command = 'toggle' | 'next' | 'prev' | 'restart' | 'rate' | 'done';
 
 export interface RendererOptions {
   avatar: Avatar;
@@ -62,7 +62,14 @@ export const CSS_TEXT = `
 .ctl button:focus-visible{outline:2px solid var(--c);outline-offset:1px}
 .ctl .n{padding:0 8px;opacity:.8;font-variant-numeric:tabular-nums}
 .ctl .rate{font-size:12px;padding:0 8px}
-@media (prefers-reduced-motion:reduce){.cur,.ring,.bubble,.bar,.ptr{transition:none}.rip{display:none}}
+.ring.turn{border-width:3px;animation:tapulse 1.4s ease-in-out infinite}
+@keyframes tapulse{0%,100%{box-shadow:0 0 0 4px var(--ring)}50%{box-shadow:0 0 0 10px var(--ring)}}
+.turn-card{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);pointer-events:auto;display:none;align-items:center;gap:14px;width:max-content;max-width:min(560px,calc(100vw - 32px));box-sizing:border-box;background:var(--cb);color:var(--cf);font:14px/1.45 var(--f);padding:12px 12px 12px 16px;border-radius:12px;border-left:4px solid var(--c);box-shadow:0 10px 28px rgb(0 0 0/.28)}
+.turn-card.on{display:flex}.ctl-on .turn-card{bottom:72px}
+.turn-card b{display:block;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:color-mix(in srgb,var(--c) 55%,var(--cf));margin-bottom:2px}
+.turn-card button{all:unset;cursor:pointer;flex:none;background:var(--c);color:#fff;font:600 13px/1 var(--f);padding:9px 14px;border-radius:8px}
+.turn-card button:focus-visible{outline:2px solid var(--cf);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.cur,.ring,.bubble,.bar,.ptr{transition:none}.rip{display:none}.ring.turn{animation:none}}
 `;
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -126,6 +133,18 @@ export function createRenderer(o: RendererOptions): RendererPort & { host: HTMLE
   live.setAttribute('role', 'status');
   live.setAttribute('aria-live', 'polite');
 
+  // The viewer's turn (perform mode): what to do, and Done for what the guide can't see them finish.
+  const card = el('div', 'turn-card', shell);
+  card.setAttribute('role', 'group');
+  card.setAttribute('aria-label', 'Your turn');
+  const cardText = el('div', undefined, card);
+  el('b', undefined, cardText).textContent = 'Your turn';
+  const cardSay = el('span', undefined, cardText);
+  const done = el('button', undefined, card);
+  done.type = 'button';
+  done.textContent = 'Done';
+  done.addEventListener('click', () => o.onCommand?.('done'));
+
   let counter: HTMLElement | null = null;
   let playBtn: HTMLButtonElement | null = null;
   let rateBtn: HTMLButtonElement | null = null;
@@ -153,7 +172,7 @@ export function createRenderer(o: RendererOptions): RendererPort & { host: HTMLE
 
   // Last applied values (dirty checking).
   let lx = NaN; let ly = NaN; let lCls = ''; let lRing = ''; let lRingOn = false;
-  let lCap = ''; let lChip: string | null = null; let lCount = ''; let lPlaying: boolean | null = null; let lRate = '';
+  let lTurn = ''; let lCap = ''; let lChip: string | null = null; let lCount = ''; let lPlaying: boolean | null = null; let lRate = '';
   let pool = 0;
   const flip: boolean[] = [false, false, false, false];
 
@@ -182,16 +201,27 @@ export function createRenderer(o: RendererOptions): RendererPort & { host: HTMLE
       const ringOn = !!v.ring && c.visible;
       if (ringOn !== lRingOn) { ring.classList.toggle('on', ringOn); lRingOn = ringOn; }
 
+      // A turn shows as the card (and the ring pulses); its words leave the bubble.
+      const turnSay = v.turn && v.caption ? v.caption.text.replace(/^Your turn:\s*/, '') : '';
+      if (turnSay !== lTurn) {
+        cardSay.textContent = turnSay ? turnSay.charAt(0).toUpperCase() + turnSay.slice(1) : '';
+        card.classList.toggle('on', !!turnSay);
+        ring.classList.toggle('turn', !!turnSay);
+        lTurn = turnSay;
+      }
+
       // A caption without a cursor ("Open /app to continue", "Sign in to start this guide.") has
       // nothing to hang a bubble on: it shows as the bar at the bottom instead.
       const text = o.captions === 'none' || !v.caption ? '' : v.caption.text;
       const asBar = o.captions === 'bar' || (!c.visible && !!text);
-      const cap = `${v.caption?.key ?? ''}|${text}|${asBar}`;
+      // During a turn the card says it; the live region still announces it.
+      const shown = turnSay ? '' : text;
+      const cap = `${v.caption?.key ?? ''}|${text}|${asBar}|${!!turnSay}`;
       if (cap !== lCap) {
         live.textContent = text;
-        live.className = asBar ? `bar${text ? ' on' : ''}` : 'sr';
-        if (text && !asBar) bubble.textContent = text;
-        bubble.classList.toggle('on', !!text && !asBar);
+        live.className = asBar && !turnSay ? `bar${text ? ' on' : ''}` : 'sr';
+        if (shown && !asBar) bubble.textContent = shown;
+        bubble.classList.toggle('on', !!shown && !asBar);
         lCap = cap;
       }
 

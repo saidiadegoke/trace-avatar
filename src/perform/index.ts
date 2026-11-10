@@ -14,6 +14,10 @@ import { createPerformer } from '../shell/perform.dom';
 
 export * from '../index';
 export { createPerformer, parseCombo, fieldOf, setNativeValue } from '../shell/perform.dom';
+export { guardsOf, handoffOf, valueFor, securityOf, GUARDS } from '../core/security';
+export { isMoney, isSecret } from '../core/mask';
+export { hasSample } from '../core/format';
+export { factsOf, fileInputOf } from '../shell/field.dom';
 
 /** createTrace with perform mode on (pass mode: 'overlay' to turn it off) and the performer wired in. */
 export function createTrace(opts: TraceOptions): TraceController {

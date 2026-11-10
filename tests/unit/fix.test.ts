@@ -429,7 +429,7 @@ describe('mount: Fix this step', () => {
     return { g, fx, p };
   };
   const stall = (p: ReturnType<typeof fakePlayer>, index = 1, reason: 'not-found' | 'wait-timeout' | 'until-timeout' = 'not-found', k = p.made.length - 1) =>
-    p.made[k].ctl.emit('stalled', { index, step: INLINE.steps[index], reason } as TraceEvents['stalled']);
+    p.made[k].ctl.emit('stalled', { index, step: INLINE.steps[index], reason } as unknown as TraceEvents['stalled']);
   beforeEach(() => { history.replaceState({}, '', '/app'); sessionStorage.clear(); });
   afterEach(() => { mounted.forEach((g) => g.destroy()); mounted = []; });
 

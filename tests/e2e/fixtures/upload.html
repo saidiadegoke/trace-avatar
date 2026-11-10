@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Upload</title>
+<style>body{font:16px system-ui;margin:40px} button,input{font:inherit;margin:6px 0} #file{display:none}</style>
+<h1>Send a file</h1>
+<button id="attach" type="button">Attach files</button>
+<input id="file" type="file">
+<span id="chosen"></span>
+<p><button id="send" type="button">Send</button></p>
+<p id="out"></p>
+<form id="signin">
+  <label>PIN <input id="pin" name="pin" type="password" inputmode="numeric"></label>
+  <label>Password <input id="pw" name="password" type="password"></label>
+  <button type="submit">Sign in</button>
+</form>
+<p id="signed"></p>
+<script>
+  const file = document.getElementById('file');
+  document.getElementById('attach').addEventListener('click', () => file.click());
+  file.addEventListener('change', () => { document.getElementById('chosen').textContent = file.files[0]?.name ?? ''; });
+  document.getElementById('send').addEventListener('click', async () => {
+    const f = file.files[0];
+    if (!f) { document.getElementById('out').textContent = 'Nothing chosen'; return; }
+    const first = (await f.text()).split('\n')[0];
+    document.getElementById('out').textContent = `Sent: ${f.name} (${f.type}, ${f.size} bytes): ${first}`;
+  });
+  document.getElementById('signin').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.getElementById('signed').textContent = `Signed in: pin ${document.getElementById('pin').value}, password ${document.getElementById('pw').value.length} chars`;
+  });
+</script>

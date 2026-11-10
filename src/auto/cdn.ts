@@ -13,6 +13,7 @@ import { mount as mountWith } from './mount';
 import type { FixModule, GuidesController, Loaders, MountOptions, PlayerModule, StudioModule } from './mount';
 import type { LauncherPosition } from '../shell/launcher.dom';
 import { baseOf, hasPerformer, loadGlobal } from '../shell/load-global';
+import { securityOf } from '../core/security';
 
 export { loadGlobal };
 
@@ -49,6 +50,7 @@ export function fromScript(el: HTMLScriptElement | null): GuidesController | nul
     guides,
     launcher: launcherOf(el.getAttribute('data-launcher')),
     perform: el.getAttribute('data-perform') === 'true',
+    ...(el.hasAttribute('data-security') ? { security: securityOf(el.getAttribute('data-security')) } : {}),
     links: links === 'off' || links === 'false' ? false : links === 'overlay' ? 'overlay' : true,
   });
 }

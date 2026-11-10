@@ -22,6 +22,7 @@ import { studioWaiting } from '../core/studio-keys';
 import type { Studio, StudioOptions } from '../studio/studio.dom';
 import type { Fix, FixOptions } from '../fix/index';
 import type { Trace } from '../core/format';
+import type { Security, Values } from '../core/security';
 
 export interface PlayerModule { createTrace(o: TraceOptions): TraceController }
 export interface StudioModule { createStudio(o: StudioOptions): Studio }
@@ -43,7 +44,7 @@ export interface RecordOptions {
   save?: StudioOptions['save'];
   /** Copied to each guide's meta.requires, e.g. ['signed-in']. */
   requires?: string[];
-  /** Mask typed text unless the author reveals a field. Default true. */
+  /** Mask typed text unless the author reveals a field. Default false (true with `security` on). */
   maskByDefault?: boolean;
   /** The shortcut that starts recording. Default 'Alt+Shift+R'; false turns it off. */
   shortcut?: string | false;
@@ -58,6 +59,13 @@ export interface MountOptions {
   launcher?: LauncherPosition | false;
   /** Allow Do it for me for guides whose manifest entry lists 'perform'. Default false. */
   perform?: boolean;
+  /**
+   * What Do it for me leaves to the viewer, and recording holds back: true (all), or 'secrets', 'money', 'files'.
+   * Default: nothing held back (see TraceOptions.security).
+   */
+  security?: Security;
+  /** Values Do it for me types, by name or field label, e.g. `{ password: 'demo-pass' }` (see TraceOptions.values). */
+  values?: Values;
   navigate?: (path: string) => void;
   prepare?: (requires: string[], trace: NormalisedTrace) => PrepareResult | Promise<PrepareResult>;
   onReset?: () => void | Promise<void>;
@@ -253,6 +261,8 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
         ...(opts.prepare ? { prepare: opts.prepare } : {}),
         ...(opts.onReset ? { onReset: opts.onReset } : {}),
         ...(opts.currentPath ? { currentPath: opts.currentPath } : {}),
+        ...(opts.security !== undefined ? { security: opts.security } : {}),
+        ...(opts.values ? { values: opts.values } : {}),
       });
     } catch (e) { fail(`"${id}" could not start: ${(e as Error).message}`, id); return null; }
     const entry = { id: g.id, mode, controller: c };
@@ -408,6 +418,8 @@ export function mount(opts: MountOptions, loaders: Loaders): GuidesController {
           ...(rec!.save ? { save: rec!.save } : {}),
           ...(rec!.requires ? { requires: rec!.requires } : {}),
           ...(rec!.maskByDefault !== undefined ? { maskByDefault: rec!.maskByDefault } : {}),
+          ...(opts.security !== undefined ? { security: opts.security } : {}),
+          ...(opts.values ? { values: opts.values } : {}),
           ...(rec!.ai ? { ai: rec!.ai } : {}),
           ...(opts.avatar ? { avatar: opts.avatar } : {}),
           ...(opts.navigate ? { navigate: opts.navigate } : {}),

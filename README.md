@@ -279,7 +279,8 @@ A trace is plain JSON (`version: 1`). The schema ships at `trace-avatar/schema.j
 |---|---|---|
 | `move` | cursor travels to the element | `target` |
 | `click` / `dblclick` | travel, press, ripple, ring | `target` |
-| `type` | travel, text appearing in a chip | `target`, `text`, `mask?` |
+| `type` | travel, text appearing in a chip | `target`, `text`, `mask?`, `value?` |
+| `upload` | travel, ring; Do it for me attaches the files | `target`, `files` |
 | `key` | a shortcut chip (`⌘↵`, `Ctrl+Enter`) | `keys`, `target?` |
 | `scroll` | scrolls the page or the element | `to` or `by`, `target?` |
 | `hover` | travel, then stay | `target`, `hold?` |
@@ -346,12 +347,43 @@ anything the page lets it.
 
 - **Inputs:** values are set the way React, Vue and Svelte notice (native setter, then `input`); a select picks
   the option whose text you typed; rich-text editors get `insertText`; Enter in a form field submits the form.
-- **Masked fields** (passwords, anything the recorder masked): the guide stops, focuses the field, says
-  "Your turn: type in “Password”, then press play" and emits `handoff`. It never knows the text.
+- **It does what it can by default.** It types every value it knows, passwords and amounts included, and attaches
+  every file the trace carries. Turn on `security` to hold some of that back (below).
+- **Values at play time:** a recorded password is always masked, so a demo passes it when the guide plays:
+  `values: { password: 'demo-pass' }`. A value is matched by the step's `value` name, its target's label, or the
+  field's own name, id or label, in any case. It stands in even with security on: the host chose it.
+- **Files:** an `upload` step's `files` with `url` (https:, relative or `data:`) or `text` are samples: Do it for
+  me attaches them to the file input (the step's element, the input inside it or beside it) as a real pick would,
+  so the app gets `input` and `change`. No picker opens.
+- **The viewer's turn:** what it can't or may not do, it hands over: a masked field with no value, a file with no
+  sample, a field security holds back, a frame (a payment form) it can't reach. The guide stops, focuses the field,
+  rings it, shows a **Your turn** card ("Type in “Password”, then press Enter.") with a **Done** button, and emits
+  `handoff` with `why` (`'masked'`, `'secret'`, `'money'`, `'file'`, `'no-file'`, `'frame'`). It carries on by
+  itself when they press **Enter** (one-line fields; the form isn't sent) or **Tab** in the field, **choose a file**
+  or an option, or press Done.
 - **The viewer steps in:** real input pauses the guide. When they press play, it goes on from the next step marked
   `checkpoint: true`, since the page may have moved on. It never seeks backwards; restart starts over.
-- **What it can't do:** browsers ignore synthetic events for file pickers, fullscreen, the clipboard, payment and
-  other cross-origin iframes. Put a hand-off (`pause: true` with a `say`) there.
+- **What it can't do:** browsers ignore synthetic events for fullscreen, the clipboard, payment and other
+  cross-origin iframes. A step on a frame is the viewer's turn.
+
+### Security
+
+Default: nothing held back, since Do it for me is for demos and sandboxes. `security` limits it:
+
+```js
+createTrace({ trace, security: true });                  // all of the below
+createTrace({ trace, security: ['secrets', 'money'] });  // or some
+```
+
+| Guard | Do it for me | Recording |
+|---|---|---|
+| `'secrets'` | passwords, card numbers and codes are the viewer's | (always masked, security or not) |
+| `'money'` | amount and price fields are the viewer's | masked |
+| `'files'` | no file is attached: the viewer chooses | no file content is kept |
+| any guard | | typed text is masked unless a field is `data-trace-reveal` |
+
+`values` still stand in. On the loader: `mount({ security })`, `data-security="secrets,money"` on the script tag,
+`<trace-guides security>` / `<trace-avatar security>` (empty or `true` for all).
 
 | Option | |
 |---|---|
@@ -360,10 +392,12 @@ anything the page lets it.
 | `onReset()` | perform mode: put the app back before a restart |
 | `resumeKey` | carry on after a full page load: the step is kept in `sessionStorage`, and a guide created with the same key on the next page (within 10 minutes) picks up from there |
 | `performer` | the hands, for the main entry, React or the custom element: `performer: createPerformer` from `trace-avatar/perform` |
+| `security` | what it leaves to the viewer: `true`, or `'secrets'`, `'money'`, `'files'` (see Security). Default none |
+| `values` | values to type, by name or field label: `{ password: 'demo-pass' }` |
 
 `meta.requires` (e.g. `["signed-in"]`) tells `prepare` what the guide needs; the recorder's `requires` option fills it
 in. In React, pass `onHandoff` / `onBlocked`; on `<trace-avatar mode="perform" resume-key="…">`, set the `hooks`
-property (`{ performer, prepare, onReset, navigate, currentPath }`) and listen for `trace-handoff` / `trace-blocked`.
+property (`{ performer, prepare, onReset, navigate, currentPath, values }`) and listen for `trace-handoff` / `trace-blocked`.
 
 ## Options
 
@@ -414,8 +448,13 @@ const trace = rec.stop();   // a valid trace.json, or null if nothing happened
   its title, and a field is never described by what was typed in it.
 - The pixel point is the last resort: while a step's element is missing, the guide waits ("Looking for …"), so a
   viewer can click along through a multi-page app.
-- **Typed text is masked by default.** Mark demo fields `data-trace-reveal` to keep their text. Passwords, card,
-  one-time-code and other secret fields are always masked. `data-trace-ignore` hides anything from the recorder.
+- **Typed text is kept; secrets never are.** Passwords, card, one-time-code and other secret fields are always
+  masked. With `security` on, everything typed is masked unless a field is `data-trace-reveal`, and the `'money'`
+  guard masks amounts whatever the default (`maskByDefault` sets the default yourself). `data-trace-ignore` hides
+  anything from the recorder.
+- **Files:** choosing a file records an `upload` step with each file's name, type and size, and its content as a
+  `data:` URL when it is 256 KB or less (`keepFileBytes`; none under the `'files'` guard). When the input is hidden
+  behind a button, the step is on the button that opened the picker.
 - **Across page loads.** Give the recorder a `persistKey` (`createRecorder({ persistKey: 'app' })`) and create
   it on every page: a recording that was going on the last page carries on, in the same tab, for up to 30 minutes
   (`persistMs`). The page load itself counts as a pause. Coming back from another site (a sign-in) adds a pause step,
@@ -582,8 +621,8 @@ page load can't be saved this way (the page doing the recording goes away); use 
 
 ## Size
 
-About 14 KB min+brotli for the player (locators, overlay, controls, validation, pages, waits); perform mode is a
-separate 15 KB entry (player + hands), the recorder a separate 9 KB one, the studio about 14 KB (loaded only for authors), the guides loader about
+About 15.5 KB min+brotli for the player (locators, overlay, controls, validation, pages, waits, the viewer's
+turn); perform mode is a separate 18.5 KB entry (player + hands + security), the recorder a separate 10 KB one, the studio about 15.5 KB (loaded only for authors), the guides loader about
 6 KB until its first play, Save as video 2.5 KB (plus 5 KB for the GIF encoder, loaded only for a GIF), repair 3.2 KB, and AI suggestions 3.8 KB in a page (5.5 KB with the server-side providers; the studio's Suggest section, 4.8 KB, loads only when opened). `size-limit` guards each in CI.
 
 ## Contributing

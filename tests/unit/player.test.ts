@@ -795,7 +795,7 @@ describe('perform mode (0.1.2)', () => {
     sim.until(99_999);
     expect(sim.s).toMatchObject({ phase: 'paused', why: 'handoff', i: 0 });
     expect(acts(sim.fx)).toEqual([{ fx: 'handoff', i: 0 }]);
-    expect(sim.view.caption?.text).toBe('Your turn: type in “#pw”, then press play.');
+    expect(sim.view.caption?.text).toBe('Your turn: type in “#pw”, then press Enter.');
     sim.run(5000);
     expect(sim.s.phase).toBe('paused');
     sim.send({ kind: 'play' });

@@ -18,13 +18,14 @@ import type { Avatar, NormalisedTrace, Step, Trace } from '../core/format';
 import { GUIDE_ID } from '../core/manifest';
 import type { Guide, GuideMode } from '../core/manifest';
 import { isSecret } from '../core/mask';
+import type { Security, Values } from '../core/security';
 import { compactPages, entryOf, expandPages, guideId, moveStep, pagesOf, removeStep, stepLabel } from '../core/review';
 import type { EntryDraft } from '../core/review';
 import { STUDIO_PERSIST, STUDIO_REVIEW_KEY } from '../core/studio-keys';
 import type { Ai, Suggestion } from '../core/assist';
 import type { AssistUi, AssistUiHost } from './assist-ui';
 import { createEmitter } from '../shell/emitter';
-import { factsOf } from '../shell/recorder.dom';
+import { factsOf } from '../shell/field.dom';
 import type { PrepareResult, TraceController, TraceOptions } from '../index';
 
 /** What a save is: `from` is the id of the saved guide the author opened (edit, Fix this step); absent when new. */
@@ -46,8 +47,12 @@ export interface StudioOptions {
   save?: (trace: Trace, entry: Guide, info: SaveInfo) => void | Promise<void>;
   /** Copied to meta.requires (e.g. ['signed-in']). */
   requires?: string[];
-  /** Mask typed text unless a field is revealed. Default true. */
+  /** Mask typed text unless a field is revealed. Default false (true with `security` on). */
   maskByDefault?: boolean;
+  /** What recording holds back and Do it for me's test play leaves to you (see TraceOptions.security). */
+  security?: Security;
+  /** Values the test play types (see TraceOptions.values). */
+  values?: Values;
   avatar?: Avatar;
   /** Offer Do it for me (the mode, and its test play). Default true. */
   perform?: boolean;
@@ -300,6 +305,7 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
       persistKey: STUDIO_PERSIST,
       ...(opts.requires ? { requires: opts.requires } : {}),
       ...(opts.maskByDefault !== undefined ? { maskByDefault: opts.maskByDefault } : {}),
+      ...(opts.security !== undefined ? { security: opts.security } : {}),
       ...(opts.avatar ? { avatar: opts.avatar } : {}),
       doc,
       ...opts.recorder,
@@ -581,6 +587,8 @@ export function createStudio(opts: StudioOptions, loaders: StudioLoaders): Studi
         ...(opts.onReset ? { onReset: opts.onReset } : {}),
         ...(opts.currentPath ? { currentPath: opts.currentPath } : {}),
         ...(opts.avatar ? { avatar: opts.avatar } : {}),
+        ...(opts.security !== undefined ? { security: opts.security } : {}),
+        ...(opts.values ? { values: opts.values } : {}),
       });
     } catch (e) { done(`Could not play: ${(e as Error).message}`); return; }
     test = c;

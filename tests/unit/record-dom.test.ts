@@ -193,7 +193,8 @@ describe('createRecorder', () => {
     at(3000); typeInto($('#ce') as HTMLElement, 'Notes');
     at(6000); fire($('#cb'), 'input');
     const tr = rec.stop()!;
-    expect(tr.steps.map((s) => s.text)).toEqual(['Two', '•••••']);
+    // Kept by default (security off): only secrets are masked.
+    expect(tr.steps.map((s) => s.text)).toEqual(['Two', 'Notes']);
   });
 
   it('ignores [data-trace-ignore], the overlay, and synthetic events by default', () => {
@@ -577,10 +578,10 @@ describe('recorder: studio hooks (caption, waitFor, mark)', () => {
     expect(parse(tr).ok).toBe(true);
   });
 
-  it('mark masks or reveals a field for this recording; a password can never be revealed', () => {
+  it('mark masks or reveals a field for this recording (security on: masked by default); a password can never be revealed', () => {
     html('<input id="name"><input id="code" data-trace-reveal><input id="pw" type="password">');
     let now = 0;
-    const r = createRecorder({ allowSynthetic: true, now: () => now });
+    const r = createRecorder({ allowSynthetic: true, now: () => now, security: true });
     expect(r.mark($('#name'), 'reveal')).toBe(false);
     expect(r.mark($('#code'), 'mask')).toBe(true);
     expect(r.mark($('#pw'), 'reveal')).toBe(true);
@@ -591,12 +592,58 @@ describe('recorder: studio hooks (caption, waitFor, mark)', () => {
     let tr = r.stop()!;
     expect(tr.steps.map((s) => [s.text, !!s.mask])).toEqual([['Ada', false], ['••', true], ['•••••••', true]]);
     // Back to the defaults.
-    const r2 = createRecorder({ allowSynthetic: true, now: () => now });
+    const r2 = createRecorder({ allowSynthetic: true, now: () => now, security: true });
     r2.mark($('#name'), 'reveal');
     expect(r2.mark($('#name'), null)).toBe(true);
     r2.start();
     typeIn('#name', 'Bo');
     tr = r2.stop()!;
     expect(tr.steps[0]).toMatchObject({ text: '••', mask: true });
+  });
+
+  it('by default typed text is kept and passwords are not; money is masked under the money guard', () => {
+    html('<input id="name"><input id="pw" type="password"><input id="amount" name="amount">');
+    let now = 0;
+    const r = createRecorder({ allowSynthetic: true, now: () => now });
+    r.start();
+    now = 10; typeIn('#name', 'Ada');
+    now = 3000; typeIn('#pw', 'hunter2');
+    now = 6000; typeIn('#amount', '5000');
+    expect(r.stop()!.steps.map((s) => [s.text, !!s.mask])).toEqual([['Ada', false], ['•••••••', true], ['5000', false]]);
+    const m = createRecorder({ allowSynthetic: true, now: () => now, security: ['money'] });
+    m.start();
+    now = 9000; typeIn('#name', 'Bo');
+    now = 12000; typeIn('#amount', '70');
+    // Any guard masks by default; money fields are masked even if the default is turned off.
+    expect(m.stop()!.steps.map((s) => s.text)).toEqual(['••', '••']);
+    const off = createRecorder({ allowSynthetic: true, now: () => now, security: ['money'], maskByDefault: false });
+    off.start();
+    now = 15000; typeIn('#name', 'Cy');
+    now = 18000; typeIn('#amount', '9');
+    expect(off.stop()!.steps.map((s) => s.text)).toEqual(['Cy', '•']);
+  });
+
+  it('a chosen file is an upload step on what opened the picker (the input hidden), with small content kept', async () => {
+    html('<button id="attach">Attach files</button><input id="file" type="file" style="display:none">');
+    const input = $('#file') as HTMLInputElement;
+    Object.defineProperty(input, 'getClientRects', { value: () => [] });
+    let now = 0;
+    const fire = (el: EventTarget, type: string) => el.dispatchEvent(type === 'click' ? new MouseEvent(type, { bubbles: true }) : new Event(type, { bubbles: true }));
+    const pick = async (rec: ReturnType<typeof createRecorder>, file: File) => {
+      rec.start();
+      now += 10; fire($('#attach'), 'click');
+      Object.defineProperty(input, 'files', { value: [file], configurable: true });
+      now += 4000; fire(input, 'change');
+      await new Promise((r) => { setTimeout(r, 20); });
+      return rec.stop()!;
+    };
+    const csv = new File(['item,price\n'], 'prices.csv', { type: 'text/csv' });
+    const tr = await pick(createRecorder({ allowSynthetic: true, now: () => now }), csv);
+    expect(tr.steps).toHaveLength(1);
+    expect(tr.steps[0]).toMatchObject({ type: 'upload', target: { role: 'button', name: 'Attach files' }, files: [{ name: 'prices.csv', type: 'text/csv', size: 11 }] });
+    expect(tr.steps[0].files![0].url).toMatch(/^data:text\/csv;base64,/);
+    // Under the files guard (or over the size), only the name, type and size are kept.
+    const held = await pick(createRecorder({ allowSynthetic: true, now: () => now, security: ['files'] }), csv);
+    expect(held.steps[0].files).toEqual([{ name: 'prices.csv', type: 'text/csv', size: 11 }]);
   });
 });

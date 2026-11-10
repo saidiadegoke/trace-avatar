@@ -9,10 +9,10 @@
  * PURE.
  */
 
-import type { Avatar, Meta, Step, Target, Trace, Until } from './format';
+import type { Avatar, FileSpec, Meta, Step, Target, Trace, Until } from './format';
 import { simplify } from './motion';
 
-export type DraftKind = 'click' | 'dblclick' | 'type' | 'key' | 'scroll' | 'note' | 'wait';
+export type DraftKind = 'click' | 'dblclick' | 'type' | 'upload' | 'key' | 'scroll' | 'note' | 'wait';
 
 export interface Draft {
   kind: DraftKind;
@@ -23,6 +23,8 @@ export interface Draft {
   key?: string;
   text?: string;
   mask?: boolean;
+  /** `upload`: the files chosen. */
+  files?: FileSpec[];
   keys?: string;
   to?: { x?: number; y?: number };
   /** The page it happened on (a pattern, ids as `*`). */
@@ -77,7 +79,7 @@ export function coalesce(drafts: readonly Draft[]): Draft[] {
   return out.map((x) => x.d);
 }
 
-const TARGETED: ReadonlySet<DraftKind> = new Set(['click', 'dblclick', 'type']);
+const TARGETED: ReadonlySet<DraftKind> = new Set(['click', 'dblclick', 'type', 'upload']);
 
 /**
  * In 'auto' mode, a run of scrolls followed by an action on an element is dropped (the player
@@ -146,6 +148,8 @@ function stepOf(d: Draft): Step {
       return { type: d.kind, t, target: d.target! };
     case 'type':
       return { type: 'type', t, target: d.target!, text: d.text ?? '', ...(d.mask ? { mask: true } : {}) };
+    case 'upload':
+      return { type: 'upload', t, target: d.target!, files: d.files ?? [] };
     case 'key':
       return { type: 'key', t, keys: d.keys!, ...(d.target ? { target: d.target } : {}) };
     case 'scroll':

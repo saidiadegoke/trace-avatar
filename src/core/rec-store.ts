@@ -40,7 +40,7 @@ export function trimPath(path: ArrayLike<number>, elapsed: number, keepMs: numbe
   return out;
 }
 
-const DRAFT_KINDS = new Set(['click', 'dblclick', 'type', 'key', 'scroll', 'note']);
+const DRAFT_KINDS = new Set(['click', 'dblclick', 'type', 'upload', 'key', 'scroll', 'note', 'wait']);
 
 /** Whether a stored value is a saved recording that may be carried on at wall time `now`. */
 export function savedOk(v: unknown, now: number, maxAge: number = REC_PERSIST_MS): v is SavedRecording {

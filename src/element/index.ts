@@ -10,16 +10,17 @@
 import { createTrace } from '../index';
 import type { Trace, TraceController, TraceOptions } from '../index';
 import type { CaptionMode } from '../shell/renderer.shadow';
+import { securityOf } from '../core/security';
 import { mount } from '../auto/index';
 import type { GuidesController, MountOptions } from '../auto/index';
 
 const BOOL = ['controls', 'autoplay', 'loop', 'keyboard'] as const;
 
 /** Options that can't be attributes, because they are functions. */
-export type Hooks = Pick<TraceOptions, 'prepare' | 'onReset' | 'navigate' | 'currentPath' | 'performer'>;
+export type Hooks = Pick<TraceOptions, 'prepare' | 'onReset' | 'navigate' | 'currentPath' | 'performer' | 'values'>;
 
 export class TraceAvatarElement extends HTMLElement {
-  static observedAttributes = ['src', 'captions', 'rate', 'takeover', 'scroll', 'mode', 'resume-key', 'avatar-name', 'avatar-image', 'avatar-color', ...BOOL];
+  static observedAttributes = ['src', 'captions', 'rate', 'takeover', 'scroll', 'mode', 'security', 'resume-key', 'avatar-name', 'avatar-image', 'avatar-color', ...BOOL];
 
   private ctl: TraceController | null = null;
   private obj: Trace | null = null;
@@ -76,6 +77,7 @@ export class TraceAvatarElement extends HTMLElement {
       takeover: (this.getAttribute('takeover') as 'pause' | 'ignore') || undefined,
       scroll: (this.getAttribute('scroll') as 'auto' | 'always' | 'never') || undefined,
       ...(this.getAttribute('mode') === 'perform' ? { mode: 'perform' as const } : {}),
+      ...(this.hasAttribute('security') ? { security: securityOf(this.getAttribute('security')) } : {}),
       ...(this.getAttribute('resume-key') ? { resumeKey: this.getAttribute('resume-key')! } : {}),
       ...this.fns,
       rate: Number.isFinite(rate) && rate > 0 ? rate : undefined,
@@ -115,7 +117,7 @@ export type GuidesHooks = Pick<MountOptions, 'prepare' | 'onReset' | 'navigate' 
  * The loader as an element. Events: guides-ready, guides-play, guides-end, guides-stop, guides-error.
  */
 export class TraceGuidesElement extends HTMLElement {
-  static observedAttributes = ['src', 'launcher', 'perform', 'controls', 'captions', 'rate', 'links'];
+  static observedAttributes = ['src', 'launcher', 'perform', 'security', 'controls', 'captions', 'rate', 'links'];
   private g: GuidesController | null = null;
   private fns: GuidesHooks = {};
 
@@ -139,6 +141,7 @@ export class TraceGuidesElement extends HTMLElement {
       links: links === 'off' || links === 'false' ? false : links === 'overlay' ? 'overlay' : true,
       launcher: l === 'off' || l === 'false' || l === 'none' ? false : l === 'bottom-left' ? 'bottom-left' : 'bottom-right',
       perform: this.hasAttribute('perform'),
+      ...(this.hasAttribute('security') ? { security: securityOf(this.getAttribute('security')) } : {}),
       controls: this.getAttribute('controls') !== 'false',
       captions: (this.getAttribute('captions') as CaptionMode) || undefined,
       rate: Number.isFinite(rate) && rate > 0 ? rate : undefined,

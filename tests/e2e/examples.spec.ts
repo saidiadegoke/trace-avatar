@@ -104,32 +104,44 @@ test('playground, Do it for me: plays the sample for real, and hands a masked fi
   await page.click('#play');
   await expect(page.locator('#sent')).toHaveText('Sent to Ada Stores for ₦125,000.', { timeout: 20_000 });
 
-  // Record: the amount is masked (only Customer is data-trace-reveal), so Do it for me asks the viewer for it.
-  await page.fill('#customer', ''); // the run above filled it
-  await page.fill('#amount', '');
-  await page.click('#record');
-  const studio = page.locator('[data-trace-avatar=studio]');
-  await studio.getByRole('button', { name: 'Got it' }).click();
-  await page.click('#customer');
-  await page.keyboard.type('Ada');
-  await page.click('#amount');
-  await page.keyboard.type('5000');
-  await page.click('#send');
-  await studio.getByRole('button', { name: '■ Stop' }).click();
-  const review = studio.getByRole('dialog', { name: 'Review the guide' });
-  await review.getByRole('textbox', { name: 'Title' }).fill('Recorded in the playground');
-  await review.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.locator('#status')).toHaveText(/Saved \d+ steps to the editor/);
-  await review.getByRole('button', { name: 'Close the studio' }).click();
-  const json = JSON.parse(await page.locator('#json').inputValue());
-  expect(json.meta.title).toBe('Recorded in the playground');
-  expect(json.steps.find((x: { mask?: boolean }) => x.mask)).toMatchObject({ type: 'type', target: { sel: '#amount' } });
+  // Record (Security off): what was typed is kept, so Do it for me types the amount back itself.
+  const recordOnce = async (amount: string) => {
+    await page.fill('#customer', ''); // the run before filled it
+    await page.fill('#amount', '');
+    await page.click('#record');
+    const studio = page.locator('[data-trace-avatar=studio]');
+    const gotIt = studio.getByRole('button', { name: 'Got it' });
+    if (await gotIt.isVisible().catch(() => false)) await gotIt.click();
+    await page.click('#customer');
+    await page.keyboard.type('Ada');
+    await page.click('#amount');
+    await page.keyboard.type(amount);
+    await page.click('#send');
+    await studio.getByRole('button', { name: '■ Stop' }).click();
+    const review = studio.getByRole('dialog', { name: 'Review the guide' });
+    await review.getByRole('textbox', { name: 'Title' }).fill('Recorded in the playground');
+    await review.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.locator('#status')).toHaveText(/Saved \d+ steps to the editor/);
+    await review.getByRole('button', { name: 'Close the studio' }).click();
+    return JSON.parse(await page.locator('#json').inputValue());
+  };
+  const plain = await recordOnce('5000');
+  expect(plain.meta.title).toBe('Recorded in the playground');
+  expect(plain.steps.find((x: { type: string; target?: { sel?: string } }) => x.type === 'type' && x.target?.sel === '#amount')).toMatchObject({ text: '5000' });
   await page.click('#play'); // still Do it for me: the form is cleared first
+  await expect(page.locator('#sent')).toHaveText('Sent to Ada for ₦5,000.', { timeout: 15_000 });
+
+  // Security on: the amount is masked when recorded (and money is left to you anyway); Enter carries on.
+  await page.check('#security');
+  const secure = await recordOnce('6000');
+  expect(secure.steps.find((x: { mask?: boolean }) => x.mask)).toMatchObject({ type: 'type', target: { sel: '#amount' } });
+  await page.click('#play');
   await expect(page.locator('#status')).toHaveText(/your turn/, { timeout: 15_000 });
+  await expect(page.locator('[data-trace-avatar] .turn-card')).toContainText('then press Enter');
   await expect(page.locator('#customer')).toHaveValue('Ada');
   await expect(page.locator('#amount')).toBeFocused();
   await page.keyboard.type('7000');
-  await page.evaluate(() => (window as any).pg.current().play());
+  await page.keyboard.press('Enter');
   await expect(page.locator('#sent')).toHaveText('Sent to Ada for ₦7,000.', { timeout: 15_000 });
 });
 

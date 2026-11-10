@@ -34,9 +34,10 @@ test('fills a React form: controlled values reach state, the password is handed 
   expect(await page.evaluate(() => (window as any).g.state)).toBe('paused');
   expect(await page.evaluate(() => document.activeElement?.getAttribute('type'))).toBe('password');
 
-  // The viewer types the password (real input), then presses play.
+  // The card says so; the viewer types the password (real input), then presses Enter: that carries on.
+  await expect(page.locator('[data-trace-avatar] .turn-card')).toContainText('Type in “input[type=password]”, then press Enter.');
   await page.keyboard.type('hunter2');
-  await page.evaluate(() => (window as any).g.play());
+  await page.keyboard.press('Enter');
   await expect.poll(() => page.evaluate(() => (window as any).g.state), { timeout: 15_000 }).toBe('ended');
   await expect(page.locator('#out')).toHaveText('Saved: Ada Stores / pro / Two lines\nof notes / 7 chars');
   await expect(page.getByRole('button', { name: 'Count 2' })).toBeVisible(); // …and the last click came after "Saved"
@@ -44,6 +45,54 @@ test('fills a React form: controlled values reach state, the password is handed 
   expect(log.filter(([k]: [string]) => k === 'stalled' || k === 'error')).toEqual([]);
   // …and its own events never looked like a takeover.
   expect(log.filter(([k]: [string]) => k === 'paused')).toHaveLength(1);
+});
+
+test('uploads: a sample file is attached as a real pick; without one the viewer chooses, and that carries on; security and values', async ({ page }) => {
+  await page.goto('/tests/e2e/fixtures/upload.html');
+  await page.addScriptTag({ url: '/dist/trace-perform.min.js' });
+  const run = (t: unknown, o: Record<string, unknown> = {}) => page.evaluate(([tr, opts]) => {
+    const w = window as any;
+    w.log = [];
+    w.g?.destroy();
+    w.g = w.TraceAvatar.createTrace({ trace: tr, rate: 2, ...opts });
+    for (const k of ['handoff', 'error', 'end'] as const) w.g.on(k, (e: any) => w.log.push([k, e?.why ?? e?.message ?? null]));
+    w.g.play();
+  }, [t, o] as const);
+  const state = () => page.evaluate(() => (window as any).g.state);
+
+  // A sample file (as text) is attached through the button the person clicked; the app reads it.
+  await run({ version: 1, steps: [
+    { type: 'upload', target: { role: 'button', name: 'Attach files' }, files: [{ name: 'prices.csv', type: 'text/csv', text: 'item,price\nbread,1200\n' }], t: 200 },
+    { type: 'click', target: { role: 'button', name: 'Send' } },
+  ] });
+  await expect.poll(state, { timeout: 15_000 }).toBe('ended');
+  await expect(page.locator('#out')).toHaveText('Sent: prices.csv (text/csv, 22 bytes): item,price');
+
+  // No sample: the viewer's turn, shown on the card; choosing a file carries on by itself.
+  await page.evaluate(() => { document.querySelector('#out')!.textContent = ''; });
+  await run({ version: 1, steps: [
+    { type: 'upload', target: { role: 'button', name: 'Attach files' }, files: [{ name: 'prices.csv', size: 22 }], t: 200 },
+    { type: 'click', target: { role: 'button', name: 'Send' } },
+  ] });
+  await expect.poll(() => page.evaluate(() => (window as any).log), { timeout: 15_000 }).toContainEqual(['handoff', 'no-file']);
+  await expect(page.locator('[data-trace-avatar] .turn-card')).toContainText('Choose a file for “Attach files”.');
+  await page.locator('#file').setInputFiles({ name: 'mine.txt', mimeType: 'text/plain', buffer: Buffer.from('hello there') });
+  await expect.poll(state, { timeout: 15_000 }).toBe('ended');
+  await expect(page.locator('#out')).toHaveText('Sent: mine.txt (text/plain, 11 bytes): hello there');
+  await expect(page.locator('[data-trace-avatar] .turn-card')).toBeHidden();
+
+  // Security on: the PIN the trace knows is not typed (the viewer's, then Tab carries on); a value stands in for the password.
+  await run({ version: 1, steps: [
+    { type: 'type', target: { role: 'textbox', name: 'PIN' }, text: '1234', t: 200 },
+    { type: 'type', target: { sel: '#pw' }, text: '••••', mask: true },
+    { type: 'click', target: { role: 'button', name: 'Sign in' } },
+  ] }, { security: true, values: { password: 'demo-pass' } });
+  await expect.poll(() => page.evaluate(() => (window as any).log), { timeout: 15_000 }).toContainEqual(['handoff', 'secret']);
+  await expect(page.locator('#pin')).toHaveValue('');
+  await page.keyboard.type('9876');
+  await page.keyboard.press('Tab');
+  await expect.poll(state, { timeout: 15_000 }).toBe('ended');
+  await expect(page.locator('#signed')).toHaveText('Signed in: pin 9876, password 9 chars');
 });
 
 test('runs an app flow: navigates by its own clicks, types into rich text, waits until "Running"', async ({ page }) => {

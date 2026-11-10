@@ -1,6 +1,6 @@
 {
   "name": "trace-avatar",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Turn a list of steps into a smooth, human-looking ghost-cursor walkthrough on your real page. Element-anchored, zero dependencies.",
   "main": "./dist/index.cjs",
   "scripts": {
@@ -136,7 +136,7 @@
     {
       "name": "core (ESM)",
       "path": "dist/index.js",
-      "limit": "14.25 KB"
+      "limit": "16 KB"
     },
     {
       "name": "react adapter (TraceAvatar, useTrace) + core",
@@ -144,7 +144,7 @@
       "ignore": [
         "react"
       ],
-      "limit": "14.25 KB",
+      "limit": "16 KB",
       "import": "{ TraceAvatar, useTrace }"
     },
     {
@@ -162,22 +162,22 @@
     {
       "name": "CDN build",
       "path": "dist/trace.min.js",
-      "limit": "14.5 KB"
+      "limit": "16.25 KB"
     },
     {
       "name": "perform (core + performer)",
       "path": "dist/perform.js",
-      "limit": "16.25 KB"
+      "limit": "19 KB"
     },
     {
       "name": "recorder",
       "path": "dist/record.js",
-      "limit": "9.5 KB"
+      "limit": "10.5 KB"
     },
     {
       "name": "loader (CDN bootstrap)",
       "path": "dist/trace-auto.min.js",
-      "limit": "7 KB"
+      "limit": "7.25 KB"
     },
     {
       "name": "loader (npm, before the first play)",
@@ -198,12 +198,12 @@
         "./perform.js",
         "./studio-assist.js"
       ],
-      "limit": "15250 B"
+      "limit": "16.25 KB"
     },
     {
       "name": "studio CDN (trace-studio.min.js)",
       "path": "dist/trace-studio.min.js",
-      "limit": "15.5 KB"
+      "limit": "16.5 KB"
     },
     {
       "name": "export (npm, before a GIF loads its encoder)",
@@ -223,7 +223,7 @@
       "name": "assist in a page (suggest, apply; the ai function calls your backend)",
       "path": "dist/assist.js",
       "import": "{ suggest, apply }",
-      "limit": "4 KB"
+      "limit": "4.25 KB"
     },
     {
       "name": "assist with the providers (server side: openAiCompatible, gemini, gateway with retries and fallback)",
@@ -245,7 +245,7 @@
     {
       "name": "studio's Suggest section (trace-studio-assist.min.js, loaded on first use)",
       "path": "dist/trace-studio-assist.min.js",
-      "limit": "5 KB"
+      "limit": "5.25 KB"
     },
     {
       "name": "GIF encoder chunk (trace-gif.min.js, loaded for a GIF)",

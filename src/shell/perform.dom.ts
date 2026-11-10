@@ -4,6 +4,8 @@
  * Every event here is synthetic (`isTrusted: false`). Most apps respond to them; a few
  * security-sensitive things never will (file pickers, fullscreen, clipboard, payment iframes),
  * and the input port ignores them, so the guide never mistakes its own actions for a takeover.
+ * A file is never picked through the picker: a sample file is attached to the input directly
+ * (`upload`), as a drop would, and the app sees `input` and `change` as from a real pick.
  *
  * Values are set through the native setter, then `input` is dispatched: that is what makes
  * React, Vue and Svelte controlled inputs see the change. Rich-text editors get `insertText`
@@ -27,7 +29,32 @@ export interface Performer {
   /** Typing is done: fire `change` as a person leaving the field would. */
   finishTyping(field: Element): void;
   focus(el: Element): void;
+  /** Attach sample files to the file input a step means (see fileInputOf). Rejects when there is none. A performer without it hands uploads to the viewer. */
+  upload?(el: Element, files: readonly FileSpec[]): Promise<void>;
+  /**
+   * Why a step is the viewer's to do (null: the guide does it), from `security`, `values` and what the page
+   * allows (core/security). Kept here, out of the overlay-only bundle. Without it: a masked field and an upload
+   * without a sample are the viewer's.
+   */
+  whyNot?(step: NStep, el: Element | null, o: { security?: Security; values?: Values }): HandoffWhy | null;
+  /** The value to type into a field: from `values` (by name or label), else the step's text. */
+  textFor?(step: NStep, field: Element, values?: Values): string;
+  /** A password, card or code field: its typing shows as bullets. */
+  secret?(field: Element): boolean;
+  /** The file input an upload step means. */
+  fileInput?(el: Element): Element | null;
 }
+
+import type { FileSpec, NStep } from '../core/format';
+import { factsOf, fileInputOf } from './field.dom';
+import { isSecret } from '../core/mask';
+import { guardsOf, handoffOf, valueFor } from '../core/security';
+import type { HandoffWhy, Security, Values } from '../core/security';
+
+/** The field a step's element means: itself, or the one field inside it. */
+const fieldIn = (el: Element): Element => (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || (el as HTMLElement).isContentEditable
+  ? el
+  : el.querySelector?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])') ?? el);
 
 const norm = (s: string | null | undefined) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -292,5 +319,37 @@ export function createPerformer(doc: Document): Performer {
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(field.tagName)) fire(field, 'change');
     },
     focus,
+    whyNot(step, el, o) {
+      const field = el ? fieldIn(el) : null;
+      const facts = el ? { field: field ? factsOf(field) : null, frame: el.tagName === 'IFRAME' || el.tagName === 'FRAME' } : null;
+      return handoffOf(step, facts, guardsOf(o.security), valueFor(o.values, step, facts?.field));
+    },
+    textFor: (step, field, values) => valueFor(values, step, factsOf(field)) ?? step.text ?? '',
+    secret: (field) => isSecret(factsOf(field)),
+    fileInput: (el) => fileInputOf(el),
+    async upload(el, files) {
+      const input = fileInputOf(el);
+      if (!input) throw new Error('no file input here');
+      const W = (view ?? globalThis) as typeof globalThis;
+      const made: File[] = [];
+      for (const f of files) {
+        let blob: Blob;
+        if (f.text !== undefined) blob = new W.Blob([f.text], { type: f.type || 'text/plain' });
+        else if (f.url !== undefined) {
+          // eslint-disable-next-line no-await-in-loop
+          const res = await W.fetch(new URL(f.url, doc.baseURI).href);
+          if (!res.ok) throw new Error(`sample file ${f.name}: HTTP ${res.status}`);
+          // eslint-disable-next-line no-await-in-loop
+          blob = await res.blob();
+        } else continue;
+        made.push(new W.File([blob], f.name, { type: f.type || blob.type }));
+      }
+      if (!made.length) throw new Error('no sample file to attach');
+      const dt = new W.DataTransfer();
+      for (const file of (input.multiple ? made : made.slice(0, 1))) dt.items.add(file);
+      input.files = dt.files;
+      input.dispatchEvent(new Plain('input', { bubbles: true, composed: true }));
+      input.dispatchEvent(new Plain('change', { bubbles: true }));
+    },
   };
 }

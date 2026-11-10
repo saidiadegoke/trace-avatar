@@ -11,5 +11,6 @@ export type { Recorder, RecorderOptions, RecorderEvents } from '../shell/recorde
 export type { RecorderState } from '../core/recorder-state';
 export { build, coalesce, pruneScrolls, gapMap, GAPS, MERGE } from '../core/build';
 export type { Draft, DraftKind, ScrollMode } from '../core/build';
-export { shouldMask, isSecret, maskText } from '../core/mask';
+export { shouldMask, isSecret, isMoney, maskText } from '../core/mask';
+export { guardsOf, securityOf, GUARDS } from '../core/security';
 export { buildTarget, bestSelector, candidates, pathSelector, looksGenerated, roleOf, meaningful, volatileHref, isEditableTarget, textBlocks, pagePattern } from '../shell/selector.dom';

@@ -25,6 +25,8 @@ export class Sim {
   mets: Record<number, boolean> | null = null;
   vp = { w: 1280, h: 800 };
   lookCalls = 0;
+  /** Perform mode: the shell's say on which steps are the viewer's; null = don't pass it (the core's default). */
+  hand: ((i: number) => boolean) | null = null;
 
   constructor(public tr: NormalisedTrace, looks: Record<number, Look | null> = {}, public cfg: Config = CFG) {
     this.s = initial();
@@ -43,7 +45,7 @@ export class Sim {
   frame(dt = 16): Effect[] {
     this.now += dt;
     const mets = this.mets;
-    return this.send({ kind: 'frame', now: this.now, look: this.look, vp: this.vp, ...(this.at !== undefined ? { at: this.at } : {}), ...(mets ? { met: (i: number) => !!mets[i] } : {}) });
+    return this.send({ kind: 'frame', now: this.now, look: this.look, vp: this.vp, ...(this.at !== undefined ? { at: this.at } : {}), ...(mets ? { met: (i: number) => !!mets[i] } : {}), ...(this.hand ? { handoff: this.hand } : {}) });
   }
 
   /** Run frames until `ms` of wall time has passed. */

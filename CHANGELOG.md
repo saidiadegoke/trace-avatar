@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.1.14 (10 Nov 2026)
+
+- **Do it for me does what it can by default.** It types every value it knows, passwords and amounts included, and
+  attaches sample files. `security` (`true`, or `'secrets'`, `'money'`, `'files'`) holds those back: what it holds
+  back is the viewer's turn. On `createTrace`, `mount`, the studio, `data-security` on the script tag, and the
+  `security` attribute on `<trace-avatar>` / `<trace-guides>`.
+- **Values at play time:** `values: { password: 'demo-pass' }` types a value the trace doesn't hold (a recorded
+  password is always masked), matched by the step's new `value` name, its target's label, or the field's own name,
+  id or label. They stand in with security on too.
+- **Uploads:** a new `upload` step (`files: [{ name, type?, size?, url? | text? }]`). Do it for me attaches files
+  with `url` or `text` to the file input as a real pick would (no picker). The recorder records a file chosen as an
+  upload step on the button that opened the picker, with its content as a `data:` URL up to 256 KB
+  (`keepFileBytes`; never under the `'files'` guard).
+- **The viewer's turn is shown clearly:** a **Your turn** card with what to do and a **Done** button, and a pulsing
+  ring on the field. It carries on by itself on **Enter** (one-line fields; the form isn't sent) or **Tab** in the
+  field, a **file chosen** or an option picked; no more pressing play. `handoff` events carry `why` (`'masked'`,
+  `'secret'`, `'money'`, `'file'`, `'no-file'`, `'frame'`). A step on a frame (a payment form) is the viewer's too.
+- **Recording keeps typed text by default (a change).** Passwords, cards and codes are still always masked. With
+  `security` on, everything is masked unless `data-trace-reveal`, as before; `maskByDefault: true` keeps the old
+  default without security. The playground has a Security switch.
+- Fixed: a recording carried across a page load was dropped when it held a `wait` step.
+- Custom performers: `upload`, `whyNot`, `textFor`, `secret` and `fileInput` are optional (`createPerformer` has
+  them); without `upload`, uploads are the viewer's turn. The security rules live in `trace-avatar/perform`
+  (`guardsOf`, `handoffOf`, `valueFor`, `isMoney`), out of the overlay-only bundle.
+- Budgets: core 14.25 → 16 KB (15.8 KB), perform 16.25 → 19 KB (18.8 KB), recorder 9.5 → 10.5 KB, studio 15.25 →
+  16.25 KB, and small rises for the CDN builds, the CDN loader and assist (the turn card, carrying on, and the
+  upload step's validation).
+
 ## 0.1.13 (10 Nov 2026)
 
 - **Save as video never hangs.** It used to wait for the shared tab's video to start with no limit, and where the
