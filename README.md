@@ -16,9 +16,9 @@ Element-anchored, so it survives layout changes. Zero dependencies. Record a tra
 
 | Show me | Do it for me |
 |---|---|
-| ![Show me: a cursor named Sarah walks through creating an invoice, with captions, without touching the form](https://raw.githubusercontent.com/saidiadegoke/trace-avatar/main/media/show-me.gif) | ![Do it for me: the same guide fills in the customer and amount and sends the invoice](https://raw.githubusercontent.com/saidiadegoke/trace-avatar/main/media/do-it-for-me.gif) |
+| ![Show me on DutyCaptain: a cursor moves like a person to Connect X on the Connections page, with a caption at each step, and nothing is clicked](https://raw.githubusercontent.com/saidiadegoke/trace-avatar/main/media/show-me.gif) | ![Do it for me on SpeedyMessaging: it finds WhatsApp on the Products page, presses Add, opens it, and points at the new WhatsApp section in the sidebar](https://raw.githubusercontent.com/saidiadegoke/trace-avatar/main/media/do-it-for-me.gif) |
 
-<sub>Rendered from `examples/vanilla-html` with [trace-avatar-render](https://github.com/saidiadegoke/trace-avatar-render).</sub>
+<sub>Recorded on [DutyCaptain](https://dutycaptain.com) and [SpeedyMessaging](https://speedymessaging.com), HelloWorld Technologies products built with trace-avatar, on demo data; rendered with [trace-avatar-render](https://github.com/saidiadegoke/trace-avatar-render).</sub>
 
 **Show me:**
 
